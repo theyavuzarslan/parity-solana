@@ -35,7 +35,7 @@ use litesvm::{
     types::{FailedTransactionMetadata, TransactionMetadata},
     LiteSVM,
 };
-use parity::state::{MarketArgs, RiskParams};
+use parity::state::{MarketArgs, RiskParams, Side};
 use solana_account::Account;
 pub use solana_keypair::Keypair;
 pub use solana_signer::Signer;
@@ -489,4 +489,153 @@ pub fn fund_insurance(c: &mut Ctx, mint: Pubkey, amount: u64) -> TxResult {
         parity::instruction::FundInsurance { amount },
     );
     send_admin(c, i)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Offer helpers (shared by offer/take tests)
+// ---------------------------------------------------------------------------------------------
+
+pub const CAP_100K: u64 = 100_000 * ONE;
+
+/// `setup()` + `init_all` + USD/TRY market 0.
+pub fn setup_market() -> Ctx {
+    let mut c = setup();
+    init_all(&mut c);
+    upsert_market(&mut c, usd_try_market_args()).unwrap();
+    c
+}
+
+#[derive(Clone, Copy)]
+pub struct OfferArgs {
+    pub nonce: u64,
+    pub market_id: u16,
+    pub side: Side,
+    pub spread_bps: u16,
+    pub min_tenor: u16,
+    pub max_tenor: u16,
+    pub capacity: u64,
+}
+
+pub fn default_offer() -> OfferArgs {
+    OfferArgs { nonce: 1, market_id: 0, side: Side::Short, spread_bps: 20, min_tenor: 7, max_tenor: 90, capacity: CAP_100K }
+}
+
+pub fn create_offer_ix(c: &Ctx, maker: Pubkey, mint: Pubkey, o: OfferArgs) -> Instruction {
+    let tp = c.token_program_of(mint);
+    ix(
+        parity::accounts::CreateOffer {
+            maker,
+            config: config_pda(),
+            market: market_pda(o.market_id),
+            mint,
+            maker_ata: ata(maker, mint, tp),
+            vault: vault_pda(mint),
+            offer: offer_pda(maker, o.nonce),
+            token_program: tp,
+            system_program: SYSTEM_PROGRAM,
+        },
+        parity::instruction::CreateOffer {
+            nonce: o.nonce,
+            market_id: o.market_id,
+            maker_side: o.side,
+            spread_bps: o.spread_bps,
+            min_tenor_days: o.min_tenor,
+            max_tenor_days: o.max_tenor,
+            capacity_usd: o.capacity,
+        },
+    )
+}
+
+pub fn create_offer(c: &mut Ctx, mint: Pubkey, o: OfferArgs) -> TxResult {
+    let maker = c.maker.insecure_clone();
+    let i = create_offer_ix(c, maker.pubkey(), mint, o);
+    send(c, &[i], &[&maker])
+}
+
+pub fn cancel_offer_ix(c: &Ctx, signer: Pubkey, offer: Pubkey, mint: Pubkey, maker_ata: Pubkey) -> Instruction {
+    ix(
+        parity::accounts::CancelOffer {
+            maker: signer,
+            config: config_pda(),
+            offer,
+            mint,
+            vault: vault_pda(mint),
+            maker_ata,
+            token_program: c.token_program_of(mint),
+            associated_token_program: anchor_spl::associated_token::ID,
+        },
+        parity::instruction::CancelOffer {},
+    )
+}
+
+pub fn cancel_offer(c: &mut Ctx, offer: Pubkey, mint: Pubkey) -> TxResult {
+    let maker = c.maker.insecure_clone();
+    let maker_ata = c.ata_of(maker.pubkey(), mint);
+    let i = cancel_offer_ix(c, maker.pubkey(), offer, mint, maker_ata);
+    send(c, &[i], &[&maker])
+}
+
+/// Decode the first Anchor event of type `E` from a transaction's `Program data:` logs.
+pub fn event<E: anchor_lang::Event + anchor_lang::AnchorDeserialize>(meta: &litesvm::types::TransactionMetadata) -> E {
+    use base64::Engine;
+    for l in &meta.logs {
+        if let Some(b64) = l.strip_prefix("Program data: ") {
+            let bytes = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+            if bytes.starts_with(E::DISCRIMINATOR) {
+                return E::deserialize(&mut &bytes[E::DISCRIMINATOR.len()..]).unwrap();
+            }
+        }
+    }
+    panic!("event not found in logs:\n{}", meta.logs.join("\n"));
+}
+
+// ---------------------------------------------------------------------------------------------
+// take_offer helpers
+// ---------------------------------------------------------------------------------------------
+
+/// `take_offer` instruction for position `index` of `offer` (market, mint and rate PDAs are read
+/// from the on-chain offer/market). `price_b` may repeat `price_a` for single-feed markets.
+#[allow(clippy::too_many_arguments)]
+pub fn take_offer_ix(
+    c: &Ctx,
+    taker: Pubkey,
+    offer: Pubkey,
+    index: u64,
+    price_a: Pubkey,
+    price_b: Pubkey,
+    notional_usd: u64,
+    tenor_days: u16,
+) -> Instruction {
+    let o: parity::state::MakerOffer = c.fetch(offer);
+    let m: parity::state::Market = c.fetch(market_pda(o.market_id));
+    let tp = c.token_program_of(o.mint);
+    ix(
+        parity::accounts::TakeOffer {
+            taker,
+            config: config_pda(),
+            offer,
+            market: market_pda(o.market_id),
+            demo_state: demo_pda(),
+            rate_base: rate_pda(m.base),
+            rate_quote: rate_pda(m.quote),
+            position: position_pda(offer, index),
+            price_a,
+            price_b,
+            mint: o.mint,
+            taker_ata: ata(taker, o.mint, tp),
+            vault: vault_pda(o.mint),
+            insurance: insurance_pda(o.mint),
+            token_program: tp,
+            system_program: SYSTEM_PROGRAM,
+        },
+        parity::instruction::TakeOffer { notional_usd, tenor_days },
+    )
+}
+
+/// Taker takes the next position (index = current `position_counter`) of `offer`.
+pub fn take_offer(c: &mut Ctx, offer: Pubkey, price_a: Pubkey, price_b: Pubkey, notional_usd: u64, tenor_days: u16) -> TxResult {
+    let taker = c.taker.insecure_clone();
+    let o: parity::state::MakerOffer = c.fetch(offer);
+    let i = take_offer_ix(c, taker.pubkey(), offer, o.position_counter, price_a, price_b, notional_usd, tenor_days);
+    send(c, &[i], &[&taker])
 }

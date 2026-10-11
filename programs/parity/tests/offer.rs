@@ -2,7 +2,7 @@
 mod common;
 use anchor_lang::{
     prelude::Pubkey,
-    solana_program::{instruction::Instruction, program_pack::Pack, system_instruction},
+    solana_program::{program_pack::Pack, system_instruction},
 };
 use anchor_spl::{
     token::spl_token,
@@ -10,85 +10,6 @@ use anchor_spl::{
 };
 use common::*;
 use parity::state::{MakerOffer, MarketArgs, Side};
-
-const CAP_100K: u64 = 100_000 * ONE;
-
-fn setup_market() -> Ctx {
-    let mut c = setup();
-    init_all(&mut c);
-    upsert_market(&mut c, usd_try_market_args()).unwrap();
-    c
-}
-
-#[derive(Clone, Copy)]
-struct OfferArgs {
-    nonce: u64,
-    market_id: u16,
-    side: Side,
-    spread_bps: u16,
-    min_tenor: u16,
-    max_tenor: u16,
-    capacity: u64,
-}
-
-fn default_offer() -> OfferArgs {
-    OfferArgs { nonce: 1, market_id: 0, side: Side::Short, spread_bps: 20, min_tenor: 7, max_tenor: 90, capacity: CAP_100K }
-}
-
-fn create_offer_ix(c: &Ctx, maker: Pubkey, mint: Pubkey, o: OfferArgs) -> Instruction {
-    let tp = c.token_program_of(mint);
-    ix(
-        parity::accounts::CreateOffer {
-            maker,
-            config: config_pda(),
-            market: market_pda(o.market_id),
-            mint,
-            maker_ata: ata(maker, mint, tp),
-            vault: vault_pda(mint),
-            offer: offer_pda(maker, o.nonce),
-            token_program: tp,
-            system_program: SYSTEM_PROGRAM,
-        },
-        parity::instruction::CreateOffer {
-            nonce: o.nonce,
-            market_id: o.market_id,
-            maker_side: o.side,
-            spread_bps: o.spread_bps,
-            min_tenor_days: o.min_tenor,
-            max_tenor_days: o.max_tenor,
-            capacity_usd: o.capacity,
-        },
-    )
-}
-
-fn create_offer(c: &mut Ctx, mint: Pubkey, o: OfferArgs) -> TxResult {
-    let maker = c.maker.insecure_clone();
-    let i = create_offer_ix(c, maker.pubkey(), mint, o);
-    send(c, &[i], &[&maker])
-}
-
-fn cancel_offer_ix(c: &Ctx, signer: Pubkey, offer: Pubkey, mint: Pubkey, maker_ata: Pubkey) -> Instruction {
-    ix(
-        parity::accounts::CancelOffer {
-            maker: signer,
-            config: config_pda(),
-            offer,
-            mint,
-            vault: vault_pda(mint),
-            maker_ata,
-            token_program: c.token_program_of(mint),
-            associated_token_program: anchor_spl::associated_token::ID,
-        },
-        parity::instruction::CancelOffer {},
-    )
-}
-
-fn cancel_offer(c: &mut Ctx, offer: Pubkey, mint: Pubkey) -> TxResult {
-    let maker = c.maker.insecure_clone();
-    let maker_ata = c.ata_of(maker.pubkey(), mint);
-    let i = cancel_offer_ix(c, maker.pubkey(), offer, mint, maker_ata);
-    send(c, &[i], &[&maker])
-}
 
 /// $100k capacity, IM 10%, spread 20 bps, protocol share 10%:
 /// 10_000 USD IM + 10% of 200 USD spread = 10_020 USD.
@@ -324,18 +245,4 @@ fn offer_events_emitted() {
     let e: parity::OfferCancelled = event(&meta);
     assert_eq!(e.offer, offer);
     assert_eq!(e.refunded, LOCKED_100K);
-}
-
-/// Decode the first Anchor event of type `E` from a transaction's `Program data:` logs.
-fn event<E: anchor_lang::Event + anchor_lang::AnchorDeserialize>(meta: &litesvm::types::TransactionMetadata) -> E {
-    use base64::Engine;
-    for l in &meta.logs {
-        if let Some(b64) = l.strip_prefix("Program data: ") {
-            let bytes = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
-            if bytes.starts_with(E::DISCRIMINATOR) {
-                return E::deserialize(&mut &bytes[E::DISCRIMINATOR.len()..]).unwrap();
-            }
-        }
-    }
-    panic!("event not found in logs:\n{}", meta.logs.join("\n"));
 }

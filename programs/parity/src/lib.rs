@@ -78,4 +78,9 @@ pub mod parity {
     pub fn cancel_offer(ctx: Context<CancelOffer>) -> Result<()> {
         instructions::offer::handle_cancel_offer(ctx)
     }
+
+    /// Taker opens a margined forward position against an offer (one PDA per offer counter).
+    pub fn take_offer(ctx: Context<TakeOffer>, notional_usd: u64, tenor_days: u16) -> Result<()> {
+        instructions::take::handle_take_offer(ctx, notional_usd, tenor_days)
+    }
 }
