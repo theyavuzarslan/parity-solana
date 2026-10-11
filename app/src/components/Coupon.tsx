@@ -68,7 +68,7 @@ export function Coupon(p: CouponProps) {
               </span>
             </div>
           </div>
-          <div className="ticket-tenor tenor-tab t-label flex items-center justify-center rounded-tr-[8px] border-b-2 border-navy bg-red px-3 text-base text-coupon @lg:text-lg">
+          <div className="ticket-tenor tenor-tab t-label flex items-center justify-center rounded-tr-[8px] bg-red shadow-[inset_0_-2px_0_var(--ticket-edge)] px-3 text-base text-coupon @lg:text-lg">
             {p.tenorDays}D
           </div>
 
