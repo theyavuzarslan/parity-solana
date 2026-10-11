@@ -20,7 +20,7 @@ interface HermesParsed {
 /** Hermes returns ids without the 0x prefix; price = price × 10^expo. */
 export function parseHermes(json: unknown): Partial<Record<FeedKey, LivePrice>> {
   const parsed = (json as { parsed?: HermesParsed[] } | null)?.parsed ?? [];
-  const byId = new Map(Object.entries(FEEDS).map(([k, id]) => [id, k as FeedKey]));
+  const byId = new Map<string, FeedKey>(Object.entries(FEEDS).map(([k, id]) => [id, k as FeedKey]));
   const out: Partial<Record<FeedKey, LivePrice>> = {};
   for (const p of parsed) {
     const key = byId.get(p.id.replace(/^0x/, "").toLowerCase());

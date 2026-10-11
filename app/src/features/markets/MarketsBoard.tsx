@@ -1,0 +1,86 @@
+"use client";
+
+import { GROUP_ORDER } from "@/data/markets";
+import { useParityQuery } from "@/data/provider";
+import type { MarketQuote } from "@/data/types";
+import { fmtAge } from "@/lib/format";
+import { MarketLine, MarketRow } from "@/components/MarketRow";
+import { Orb } from "@/components/Orb";
+import { Panel } from "@/components/Panel";
+
+const HEADS = ["Spot", "Fwd 30D", "Fwd 90D", "Fwd 180D", "Carry", "Best offer"];
+
+export function MarketsBoard() {
+  const markets = useParityQuery((d) => d.getMarkets(), [], 15_000);
+  const health = useParityQuery((d) => d.getFeedHealth(), [], 15_000);
+  const demo = useParityQuery((d) => d.getDemo());
+  const list = markets.value ?? [];
+  const open = list.filter((m) => m.status === "OPEN").length;
+  const groups = GROUP_ORDER.map((g) => ({ g, rows: list.filter((m) => m.group === g) })).filter((x) => x.rows.length);
+
+  const feedLine = demo.value?.demoMode
+    ? "Demo mode is on: demo prices supersede Pyth, every market shows OPEN."
+    : health.value?.live
+      ? `Live from Pyth Hermes · checked ${health.value.checkedAt ? fmtAge(health.value.checkedAt) : "just now"}.`
+      : (health.value?.note ?? "Checking the live feed…");
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="t-display text-3xl text-navy md:text-[3rem]">Live status board</h1>
+          <p className="mt-2 max-w-prose text-navy-2">
+            Fifteen markets. Forwards are computed from spot and the rate gap: F = S × (1 + r<sub>quote</sub>·t) / (1 + r<sub>base</sub>·t). Rates are demo values, to be verified.
+          </p>
+        </div>
+        <div className="text-right">
+          <span className="t-label block text-xs text-navy-2">Open now</span>
+          <span className="t-num text-2xl text-carbon">{list.length ? `${open} / ${list.length}` : "—"}</span>
+        </div>
+      </div>
+      <p className="mt-4 border-y border-hairline py-2 text-sm text-navy-2" role="status">{feedLine}</p>
+
+      {markets.loading && !list.length ? (
+        <div className="flex h-48 items-center justify-center gap-3">
+          <Orb label="Loading prices" size={32} state="connecting" />
+          <span className="t-label text-sm text-navy-2">Fetching prices…</span>
+        </div>
+      ) : (
+        <div className="mt-8 space-y-10">
+          {groups.map(({ g, rows }) => (
+            <Panel key={g} title={g} aside={<span>{rows.length} market{rows.length > 1 ? "s" : ""}</span>}>
+              <Board rows={rows} />
+            </Panel>
+          ))}
+        </div>
+      )}
+      <p className="mt-8 text-xs text-navy-2">
+        CLOSED: the last Pyth price is older than 120 seconds (FX closes at weekends; it reopens Sunday 22:00 UTC). STALE: no live feed reachable, a static demo spot is shown. Best offer = tightest demo maker spread.
+      </p>
+    </div>
+  );
+}
+
+function Board({ rows }: { rows: MarketQuote[] }) {
+  return (
+    <>
+      <table className="hidden w-full border-collapse border-y-2 border-navy bg-coupon md:table">
+        <thead>
+          <tr>
+            <th scope="col" className="t-label px-3 py-2 text-left text-xs text-navy-2">Market</th>
+            {HEADS.map((h) => (
+              <th key={h} scope="col" className="t-label px-3 py-2 text-right text-xs text-navy-2">{h}</th>
+            ))}
+            <th scope="col" className="t-label px-3 py-2 text-left text-xs text-navy-2">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((q) => <MarketRow key={q.id} q={q} />)}
+        </tbody>
+      </table>
+      <ul className="border-b-2 border-t-2 border-navy bg-coupon px-3 md:hidden">
+        {rows.map((q) => <MarketLine key={q.id} q={q} />)}
+      </ul>
+    </>
+  );
+}

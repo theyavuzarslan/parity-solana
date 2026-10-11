@@ -39,7 +39,7 @@ export function MarketLine({ q }: { q: MarketQuote }) {
   const dp = marketConfig(q.id).dp;
   const note = STATUS_NOTE[q.status];
   return (
-    <li className="border-t border-hairline py-3">
+    <li className="border-t border-hairline py-3 first:border-t-0">
       <div className="flex items-baseline justify-between gap-3">
         <span className="t-label text-base text-navy">{q.id}</span>
         <span className="t-num text-lg text-carbon">{fmtPrice(q.spot, dp)}</span>
