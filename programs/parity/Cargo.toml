@@ -27,6 +27,12 @@ anchor-spl = { version = "1.2.1", features = ["token", "token_2022", "associated
 [dev-dependencies]
 litesvm = "0.18"
 proptest = "1"
+base64 = "0.22.1"
+# Versions pinned to what litesvm 0.18 resolves to so types unify with it and anchor-lang.
+solana-keypair = "3.1.2"
+solana-signer = "3.0.1"
+solana-transaction = "4.3.0"
+solana-account = "4.7.0"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
