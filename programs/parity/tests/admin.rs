@@ -73,9 +73,38 @@ fn initialize_stores_config_and_creates_accounts() {
 #[test]
 fn initialize_rejects_bad_params() {
     let mut c = setup();
-    let mut p = default_params();
-    p.liq_equity_bps = p.call_equity_bps;
-    assert_error(initialize(&mut c, p).unwrap_err(), "InvalidParams");
+    let base = default_params();
+    let bad = [
+        parity::state::RiskParams { liq_equity_bps: base.call_equity_bps, ..base },
+        parity::state::RiskParams { partial_liq_bps: 0, ..base },
+        parity::state::RiskParams { min_notional: 0, ..base },
+        parity::state::RiskParams { max_conf_bps: 0, ..base },
+    ];
+    for p in bad {
+        assert_error(initialize(&mut c, p).unwrap_err(), "InvalidParams");
+    }
+}
+
+#[test]
+fn initialize_rejects_non_upgrade_authority() {
+    let mut c = setup();
+    // signer is not the upgrade authority
+    let taker = c.taker.insecure_clone();
+    let i = initialize_ix(taker.pubkey(), c.usdc, c.usdg, default_params());
+    assert_error(send(&mut c, &[i], &[&taker]).unwrap_err(), "Unauthorized");
+    // immutable program (no upgrade authority): nobody can initialize
+    set_upgrade_authority(&mut c, None);
+    assert_error(initialize(&mut c, default_params()).unwrap_err(), "Unauthorized");
+    // wrong program_data account (a fake one) is rejected
+    let admin_pk = c.admin.pubkey();
+    set_upgrade_authority(&mut c, Some(admin_pk));
+    let admin = c.admin.insecure_clone();
+    let mut i = initialize_ix(admin.pubkey(), c.usdc, c.usdg, default_params());
+    i.accounts[2].pubkey = c.usdc; // program_data slot
+    assert!(send(&mut c, &[i], &[&admin]).is_err());
+    assert!(c.svm.get_account(&config_pda()).is_none());
+    // upgrade authority succeeds
+    initialize(&mut c, default_params()).unwrap();
 }
 
 #[test]
@@ -138,10 +167,15 @@ fn upsert_market_validation() {
         parity::state::MarketArgs { scale_den: 0, ..m },
         parity::state::MarketArgs { id: 16, ..m },
         parity::state::MarketArgs { im_bps: 10_001, ..m },
+        parity::state::MarketArgs { feed_a: [0; 32], ..m },
+        parity::state::MarketArgs { op: 1, feed_b: [0; 32], ..m },
+        parity::state::MarketArgs { quote_conv: 2, feed_b: [0; 32], ..m },
     ];
     for a in bad {
         assert_error(upsert_market(&mut c, a).unwrap_err(), "InvalidParams");
     }
+    // two-feed market with feed_b set is accepted
+    upsert_market(&mut c, parity::state::MarketArgs { id: 1, op: 2, feed_b: [2; 32], quote_conv: 2, ..m }).unwrap();
     let taker = c.taker.insecure_clone();
     let i = upsert_market_ix(taker.pubkey(), m);
     assert_error(send(&mut c, &[i], &[&taker]).unwrap_err(), "Unauthorized");
@@ -164,9 +198,14 @@ fn demo_price_and_clock() {
     set_demo_price(&mut c, 3, 0, 0, false).unwrap();
     let demo: parity::state::DemoState = c.fetch(demo_pda());
     assert!(!demo.prices[3].set);
+    assert_error(set_demo_clock(&mut c, -1).unwrap_err(), "InvalidParams");
+    set_demo_price(&mut c, 5, 11, 12, true).unwrap();
     set_demo_mode(&mut c, false).unwrap();
     let cfg: parity::state::Config = c.fetch(config_pda());
     assert!(!cfg.demo_mode);
+    assert_eq!(cfg.demo_clock_offset, 0); // cleared on demo off
+    let demo: parity::state::DemoState = c.fetch(demo_pda());
+    assert!(demo.prices.iter().all(|p| !p.set)); // all overrides cleared
 }
 
 #[test]

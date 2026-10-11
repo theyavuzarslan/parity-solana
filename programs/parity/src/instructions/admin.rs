@@ -6,7 +6,7 @@ use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, Tran
 
 use crate::{
     errors::ParityError,
-    constants::{CONV_INV_FEED_B, OP_DIV},
+    constants::{CONV_INV_FEED_B, OP_DIV, OP_NONE},
     state::*,
 };
 
@@ -14,8 +14,13 @@ use crate::{
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
+    /// Must be the program's upgrade authority (prevents first-caller-wins initialization).
     #[account(mut)]
     pub admin: Signer<'info>,
+    #[account(constraint = program.programdata_address()? == Some(program_data.key()) @ ParityError::Unauthorized)]
+    pub program: Program<'info, crate::program::Parity>,
+    #[account(constraint = program_data.upgrade_authority_address == Some(admin.key()) @ ParityError::Unauthorized)]
+    pub program_data: Account<'info, ProgramData>,
     #[account(init, payer = admin, space = 8 + Config::INIT_SPACE, seeds = [b"config"], bump)]
     pub config: Account<'info, Config>,
     #[account(init, payer = admin, space = 8 + DemoState::INIT_SPACE, seeds = [b"demo"], bump)]
@@ -101,6 +106,10 @@ pub fn handle_upsert_market(ctx: Context<UpsertMarket>, args: MarketArgs) -> Res
     require!(args.op <= OP_DIV, ParityError::InvalidParams);
     require!(args.quote_conv <= CONV_INV_FEED_B, ParityError::InvalidParams);
     require!(args.scale_num > 0 && args.scale_den > 0, ParityError::InvalidParams);
+    require!(args.feed_a != [0u8; 32], ParityError::InvalidParams);
+    if args.op != OP_NONE || args.quote_conv == CONV_INV_FEED_B {
+        require!(args.feed_b != [0u8; 32], ParityError::InvalidParams);
+    }
     ctx.accounts.market.set_inner(Market {
         id: args.id,
         symbol: args.symbol,
@@ -126,10 +135,19 @@ pub struct SetDemoMode<'info> {
     #[account(mut, seeds = [b"config"], bump = config.bump, has_one = admin @ ParityError::Unauthorized)]
     pub config: Account<'info, Config>,
     pub admin: Signer<'info>,
+    #[account(mut, seeds = [b"demo"], bump = demo_state.bump)]
+    pub demo_state: Account<'info, DemoState>,
 }
 
 pub fn handle_set_demo_mode(ctx: Context<SetDemoMode>, on: bool) -> Result<()> {
     ctx.accounts.config.demo_mode = on;
+    if !on {
+        // Leaving demo mode wipes all demo overrides so re-enabling starts clean.
+        ctx.accounts.config.demo_clock_offset = 0;
+        for p in ctx.accounts.demo_state.prices.iter_mut() {
+            p.set = false;
+        }
+    }
     Ok(())
 }
 
@@ -158,6 +176,7 @@ pub struct SetDemoClock<'info> {
 
 pub fn handle_set_demo_clock(ctx: Context<SetDemoClock>, offset_secs: i64) -> Result<()> {
     require!(ctx.accounts.config.demo_mode, ParityError::DemoModeOff);
+    require!(offset_secs >= 0, ParityError::InvalidParams);
     ctx.accounts.config.demo_clock_offset = offset_secs;
     Ok(())
 }

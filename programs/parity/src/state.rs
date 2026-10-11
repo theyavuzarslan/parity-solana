@@ -26,7 +26,7 @@ pub struct RiskParams {
 
 impl RiskParams {
     /// All bps <= 10_000, liq_equity < call_equity, max_price_age > 0, liq_confirm_marks >= 1,
-    /// liq_confirm_min_gap_secs >= 0.
+    /// liq_confirm_min_gap_secs >= 0, partial_liq_bps > 0, min_notional > 0, max_conf_bps > 0.
     pub fn validate(&self) -> Result<()> {
         let bps = [
             self.open_fee_bps,
@@ -43,6 +43,9 @@ impl RiskParams {
         require!(self.max_price_age_secs > 0, ParityError::InvalidParams);
         require!(self.liq_confirm_marks >= 1, ParityError::InvalidParams);
         require!(self.liq_confirm_min_gap_secs >= 0, ParityError::InvalidParams);
+        require!(self.partial_liq_bps > 0, ParityError::InvalidParams);
+        require!(self.min_notional > 0, ParityError::InvalidParams);
+        require!(self.max_conf_bps > 0, ParityError::InvalidParams);
         Ok(())
     }
 }
@@ -126,10 +129,13 @@ pub struct DemoPrice {
     pub set: bool,
 }
 
+// DemoState has one slot per market id; keep the array length and MAX_MARKETS in sync.
+const _: () = assert!(MAX_MARKETS == 16);
+
 #[account]
 #[derive(InitSpace)]
 pub struct DemoState {
-    pub prices: [DemoPrice; 16],
+    pub prices: [DemoPrice; MAX_MARKETS as usize],
     pub bump: u8,
 }
 

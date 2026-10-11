@@ -126,6 +126,8 @@ pub fn setup() -> Ctx {
         svm.airdrop(&k.pubkey(), 100_000_000_000).unwrap();
     }
     let mut c = Ctx { svm, admin, maker, taker, usdc: Pubkey::default(), usdg: Pubkey::default() };
+    let admin_pk = c.admin.pubkey();
+    set_upgrade_authority(&mut c, Some(admin_pk));
     warp_time(&mut c, START_TS);
     c.usdc = create_mint(&mut c, TOKEN_PROGRAM);
     c.usdg = create_mint(&mut c, TOKEN_2022_PROGRAM);
@@ -145,6 +147,35 @@ pub fn send(c: &mut Ctx, ixs: &[Instruction], signers: &[&Keypair]) -> TxResult 
     let res = c.svm.send_transaction(tx);
     c.svm.expire_blockhash();
     res
+}
+
+/// BPF upgradeable loader id.
+pub const BPF_LOADER_UPGRADEABLE: Pubkey =
+    anchor_lang::solana_program::bpf_loader_upgradeable::ID;
+
+/// ProgramData account of the parity program (`[program_id]` under the upgradeable loader).
+pub fn program_data_pda() -> Pubkey {
+    Pubkey::find_program_address(&[PROGRAM_ID.as_ref()], &BPF_LOADER_UPGRADEABLE).0
+}
+
+/// Rewrite the program's ProgramData upgrade authority. LiteSVM's `add_program_from_file`
+/// writes `None`; `setup()` sets it to admin so `initialize` (upgrade-authority gated) works.
+/// Layout (bincode): [0..4] tag=3, [4..12] slot, [12] Option tag, [13..45] authority.
+pub fn set_upgrade_authority(c: &mut Ctx, authority: Option<Pubkey>) {
+    let addr = program_data_pda();
+    let mut acc = c.svm.get_account(&addr).expect("programdata exists");
+    assert_eq!(u32::from_le_bytes(acc.data[0..4].try_into().unwrap()), 3, "ProgramData tag");
+    match authority {
+        Some(a) => {
+            acc.data[12] = 1;
+            acc.data[13..45].copy_from_slice(a.as_ref());
+        }
+        None => {
+            acc.data[12] = 0;
+            acc.data[13..45].fill(0);
+        }
+    }
+    c.svm.set_account(addr, acc).unwrap();
 }
 
 /// Program-derived address under the parity program id.
@@ -228,6 +259,7 @@ pub fn advance_time(c: &mut Ctx, secs: i64) {
 
 /// Assert a failed transaction carries the given `ParityError` (or any Anchor error) name.
 /// Matches `Error Code: <name>.` in the logs; panics with the logs otherwise.
+/// The trailing period is deliberate: it prevents prefix collisions between variant names.
 pub fn assert_error(err: FailedTransactionMetadata, name: &str) {
     let needle = format!("Error Code: {name}.");
     if err.meta.logs.iter().any(|l| l.contains(&needle)) {
@@ -290,20 +322,25 @@ pub fn mint_to(c: &mut Ctx, mint: Pubkey, owner: Pubkey, amount: u64) -> TxResul
 // Admin instruction builders / wrappers
 // ---------------------------------------------------------------------------------------------
 
-fn ix<A: ToAccountMetas, D: InstructionData>(accounts: A, data: D) -> Instruction {
+/// Build a parity instruction from an Anchor accounts struct and instruction data.
+pub fn ix<A: ToAccountMetas, D: InstructionData>(accounts: A, data: D) -> Instruction {
     Instruction { program_id: PROGRAM_ID, accounts: accounts.to_account_metas(None), data: data.data() }
 }
 
-/// Send one instruction signed by admin.
-fn send_admin(c: &mut Ctx, i: Instruction) -> TxResult {
+/// Send one instruction signed (and paid) by admin.
+pub fn send_admin(c: &mut Ctx, i: Instruction) -> TxResult {
     let admin = c.admin.insecure_clone();
     send(c, &[i], &[&admin])
 }
 
+/// `initialize` instruction. `admin` must be the program upgrade authority (setup() makes the
+/// harness admin the upgrade authority).
 pub fn initialize_ix(admin: Pubkey, usdc: Pubkey, usdg: Pubkey, params: RiskParams) -> Instruction {
     ix(
         parity::accounts::Initialize {
             admin,
+            program: PROGRAM_ID,
+            program_data: program_data_pda(),
             config: config_pda(),
             demo_state: demo_pda(),
             usdc_mint: usdc,
@@ -376,7 +413,7 @@ pub fn set_rate_as(c: &mut Ctx, signer: &Keypair, code: [u8; 3], rate_bps: i64, 
 }
 
 /// Market 0: USD/TRY (base USD, quote TRY), single feed, `op = None`, quote leg via InvFeedA,
-/// IM 10%. Feed id is a placeholder `[1; 32]`.
+/// IM 10%. Feed id is a placeholder `[1; 32]` (feed_b unused, zero).
 pub fn usd_try_market_args() -> MarketArgs {
     MarketArgs {
         id: 0,
@@ -413,7 +450,7 @@ pub fn upsert_market(c: &mut Ctx, args: MarketArgs) -> TxResult {
 
 pub fn set_demo_mode(c: &mut Ctx, on: bool) -> TxResult {
     let i = ix(
-        parity::accounts::SetDemoMode { config: config_pda(), admin: c.admin.pubkey() },
+        parity::accounts::SetDemoMode { config: config_pda(), admin: c.admin.pubkey(), demo_state: demo_pda() },
         parity::instruction::SetDemoMode { on },
     );
     send_admin(c, i)
