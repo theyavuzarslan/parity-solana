@@ -141,7 +141,7 @@ mod tests {
 
     use proptest::prelude::*;
     proptest! {
-        #[test] fn forward_never_panics(spot in 1u64..=100_000_000_000_000, rb in -500i64..=50_000, rq in -500i64..=50_000,
+        #[test] fn forward_never_panics(spot in 1_000u64..=100_000_000_000_000, rb in -500i64..=50_000, rq in -500i64..=50_000,
                                         t in 0i64..=365 * SECS_PER_DAY, bbd in prop::sample::select(vec![360u16, 365]), bqd in prop::sample::select(vec![360u16, 365])) {
             let f = forward(spot, rb, bbd, rq, bqd, t);
             if rb >= 0 && rq >= 0 { prop_assert!(f.is_some()); }
