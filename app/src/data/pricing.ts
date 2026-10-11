@@ -33,14 +33,19 @@ export function usdPerQuote(market: MarketId, spot: number): number {
 }
 
 /**
- * Status rule: demo override → OPEN; live price older than 120 s → CLOSED
- * (FX weekends, holidays); no live feed at all → STALE.
+ * Status rule: demo override → OPEN; ECB daily reference → REF (lockable on devnet,
+ * labelled "not a live feed"); live price older than 120 s → CLOSED (FX weekends,
+ * holidays); no feed at all → STALE.
  */
 export function marketStatus(p: { source: SpotSource; publishTime: number; nowSec: number }): MarketStatus {
   if (p.source === "demo-override") return "OPEN";
   if (p.source === "demo-static") return "STALE";
+  if (p.source === "ecb-ref") return "REF";
   return p.nowSec - p.publishTime > PROTOCOL.maxPriceAgeSecs ? "CLOSED" : "OPEN";
 }
+
+/** Statuses that block opening or marking a position. REF is allowed (devnet, test tokens). */
+export const isPaused = (s: MarketStatus) => s === "CLOSED" || s === "STALE";
 
 /** Long PnL in USD at a mark price (NDF convention, undiscounted for the demo). */
 export function pnlUsd(market: MarketId, side: Side, quantity: number, strike: number, mark: number): number {

@@ -15,7 +15,7 @@ describe("WaterfallView", () => {
   });
 
   it("the demo VOID position's waterfall sums correctly", async () => {
-    const data = createMockProvider({ offline: true });
+    const data = createMockProvider({ offline: true, demoMode: true });
     const voided = (await data.getPositions()).find((p) => p.status === "Liquidated");
     expect(voided?.waterfall).toBeDefined();
     const w = voided!.waterfall!;

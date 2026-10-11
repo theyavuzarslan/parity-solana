@@ -36,3 +36,9 @@ export function fmtAge(sec: number, nowSec = Math.floor(Date.now() / 1000)): str
 export const shortAddr = (a: string) => `${a.slice(0, 4)}…${a.slice(-4)}`;
 
 export const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
+
+/** "09 OCT 14:15 UTC" — when a price was last printed. */
+export function fmtStamp(sec: number): string {
+  const d = new Date(sec * 1000);
+  return `${String(d.getUTCDate()).padStart(2, "0")} ${MONTHS[d.getUTCMonth()]} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")} UTC`;
+}

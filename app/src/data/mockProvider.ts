@@ -5,12 +5,12 @@
  * "demo" / "mock" in the UI. State lives for the browser session (lost on a
  * hard reload) — the chain provider replaces all of it with devnet accounts.
  */
-import { DEMO_SPOTS, FEEDS, MARKETS, marketConfig, PROTOCOL, SEED_RATES, type FeedKey } from "./markets";
-import { carryPct, forwardFor, marketStatus, pnlUsd, strikeFor, usdPerQuote } from "./pricing";
+import { DEMO_ONLY_FEEDS, DEMO_SPOTS, FEEDS, MARKETS, marketConfig, PROTOCOL, refDateToSec, SEED_RATES, SEED_REF_DATE, type FeedKey } from "./markets";
+import { carryPct, forwardFor, isPaused, marketStatus, pnlUsd, strikeFor, usdPerQuote } from "./pricing";
 import { fetchLive, type LiveSnapshot } from "./pyth";
 import type {
   DemoState, DispatchEntry, FaucetResult, FeedHealth, LadderQuote, LadderRequest, LockResult,
-  MarketId, MarketQuote, Mint, Offer, ParityData, Position, Preflight, Rate, RateCode, RungQuote, Side, Tenor,
+  MarketId, MarketQuote, MarketStatus, Mint, Offer, ParityData, Position, Preflight, Rate, RateCode, RungQuote, Side, SpotSource, Tenor,
 } from "./types";
 
 const DAY = 86_400;
@@ -41,17 +41,27 @@ function mulberry32(seed: number) {
 
 interface InternalPosition extends Omit<Position, "pnlUsd" | "markPrice"> {
   breachCount: number;
+  /** seeded demo history (No. 0001–0005): only visible while demo mode is on */
+  history?: boolean;
   /** frozen result for terminal positions */
   finalPnlUsd?: number;
   finalMark?: number;
 }
 
 export interface MockOptions {
-  /** start with demo mode on (default true — keeps the lock flow usable when FX is closed) */
+  /** start with demo mode on (default false — real/reference prices on load; Dispatch turns it on) */
   demoMode?: boolean;
   /** starting mock wallet balances */
   balances?: Partial<Record<Mint, number>>;
   connected?: boolean;
+  /** starting test SOL (default 1 when `connected` is passed, else 0 — connect() alone brings none) */
+  sol?: number;
+  /** seed the five demo-history coupons, shown while demo mode is on (default true) */
+  seedDemoPositions?: boolean;
+  /** replace the demo maker book (tests: "no seats" rungs) */
+  offers?: Offer[];
+  /** force a market status (tests: CLOSED / STALE states) */
+  forceStatus?: Partial<Record<MarketId, MarketStatus>>;
   /** disable network polling (tests) */
   offline?: boolean;
   /** injectable clock, ms */
@@ -66,14 +76,21 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
 
   const startSec = Math.floor(realNow() / 1000);
   let rates: Rate[] = SEED_RATES.map((r) => ({ ...r, updatedAt: startSec }));
-  let demo: DemoState = { demoMode: opts.demoMode ?? true, clockOffsetDays: 0, shocks: {} };
-  let live: LiveSnapshot = { ok: false, prices: {}, checkedAt: 0, note: "Live feed not checked yet." };
+  let demo: DemoState = { demoMode: opts.demoMode ?? false, clockOffsetDays: 0, shocks: {} };
+  // Seeded synchronously: ECB reference rates of SEED_REF_DATE for FX (REF), metals stay demo.
+  const seedPrices = Object.fromEntries(
+    (Object.keys(FEEDS) as FeedKey[])
+      .filter((k) => !DEMO_ONLY_FEEDS.includes(k))
+      .map((k) => [k, { price: DEMO_SPOTS[k], publishTime: refDateToSec(SEED_REF_DATE), source: "ecb-ref" as const }]),
+  ) as LiveSnapshot["prices"];
+  let live: LiveSnapshot = { ok: true, provider: "ecb", prices: seedPrices, checkedAt: 0, note: `Seeded ECB reference rates of ${SEED_REF_DATE} — refreshing…` };
   let livePending: Promise<void> | null = null;
   let wallet = {
     connected: opts.connected ?? false,
     address: opts.connected ? fakeBase58(44, rnd) : (null as string | null),
     label: opts.connected ? "Demo wallet (mock)" : (null as string | null),
     balances: { USDC: opts.balances?.USDC ?? 0, USDG: opts.balances?.USDG ?? 0 } as Record<Mint, number>,
+    solBalance: opts.sol ?? (opts.connected ? 1 : 0),
   };
   let log: DispatchEntry[] = [];
   let positions: InternalPosition[] | null = null;
@@ -82,7 +99,10 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
   const nowSec = () => Math.floor(realNow() / 1000) + demo.clockOffsetDays * DAY;
 
   // ---------- Offers (demo makers) ----------
-  const offers: Offer[] = MARKETS.flatMap((m, i) => {
+  // Demo maker book. Makers selling USD/TRY forward (an importer's counterparty) and
+  // gram-gold makers only quote out to 150 days, so a 6-month ladder there prints a
+  // "no seats" rung — the empty state the Advisor has to handle honestly.
+  const offers: Offer[] = opts.offers ?? MARKETS.flatMap((m, i) => {
     const base = m.group === "Lira" || m.group === "Gold" ? 25 : m.group === "EM peers" ? 18 : 8;
     return (["long", "short"] as Side[]).map((makerSide, j) => ({
       id: `offer-${i + 1}-${j + 1}`,
@@ -91,7 +111,7 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
       makerSide,
       spreadBps: base + (j === 0 ? 0 : 5) + (i % 3) * 2,
       minTenorDays: 1,
-      maxTenorDays: 365,
+      maxTenorDays: (m.id === "USD/TRY" && makerSide === "short") || m.id === "GAU/TRY" ? 150 : 365,
       capacityUsd: m.group === "Lira" ? 50_000 : 20_000,
       mint: j === 0 ? "USDC" : "USDG",
       demo: true as const,
@@ -99,51 +119,63 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
   });
 
   // ---------- Prices ----------
-  async function refreshLive(force = false) {
+  /**
+   * Never awaited by reads: the seeded snapshot answers immediately and fresh
+   * prices overlay it when the route handler answers (then listeners refetch).
+   */
+  function refreshLive(force = false) {
     if (opts.offline) return;
     const now = Math.floor(Date.now() / 1000);
     if (!force && now - live.checkedAt < LIVE_TTL_SECS) return;
-    if (!livePending) {
-      livePending = fetchLive().then((snap) => {
-        // keep the last good prices if a poll fails
-        live = snap.ok ? snap : { ...live, ok: false, checkedAt: snap.checkedAt, note: snap.note };
-        livePending = null;
-      });
-    }
-    await livePending;
+    if (livePending) return;
+    live = { ...live, checkedAt: now };
+    livePending = fetchLive().then((snap) => {
+      // overlay: keep the previous (seeded or last good) prices for feeds a poll did not return
+      live = snap.ok
+        ? { ...snap, prices: { ...live.prices, ...snap.prices } }
+        : { ...live, checkedAt: snap.checkedAt, note: `${snap.note} Showing the last reference rates.` };
+      livePending = null;
+      notify();
+    });
   }
 
-  function feedSpots(): { spots: Record<FeedKey, number>; publish: Record<FeedKey, number | null> } {
+  function feedSpots(): { spots: Record<FeedKey, number>; publish: Record<FeedKey, number | null>; src: Record<FeedKey, "pyth" | "ecb-ref" | null> } {
     const spots = {} as Record<FeedKey, number>;
     const publish = {} as Record<FeedKey, number | null>;
+    const src = {} as Record<FeedKey, "pyth" | "ecb-ref" | null>;
     for (const k of Object.keys(FEEDS) as FeedKey[]) {
       const lp = live.prices[k];
       spots[k] = lp?.price ?? DEMO_SPOTS[k];
       publish[k] = lp?.publishTime ?? null;
+      src[k] = lp?.source ?? null;
     }
-    return { spots, publish };
+    return { spots, publish, src };
   }
 
   function quoteFor(id: MarketId): MarketQuote {
     const m = marketConfig(id);
-    const { spots, publish } = feedSpots();
+    const { spots, publish, src } = feedSpots();
     let spot = m.compose(spots);
     const pubs = m.feeds.map((f) => publish[f]);
-    const hasLive = live.ok && pubs.every((p) => p !== null);
-    let source: MarketQuote["source"];
+    const srcs = m.feeds.map((f) => src[f]);
+    let source: SpotSource;
     let publishTime: number;
     if (demo.demoMode) {
       spot *= demo.shocks[id] ?? 1;
       source = "demo-override";
       publishTime = nowSec();
-    } else if (hasLive) {
-      source = "pyth";
+    } else if (srcs.some((x) => x === null)) {
+      // any leg without a feed (metals without a Pyth key) → the whole market is a demo placeholder
+      source = "demo-static";
+      publishTime = Math.min(...pubs.filter((p): p is number => p !== null), startSec);
+    } else if (srcs.some((x) => x === "ecb-ref")) {
+      source = "ecb-ref";
       publishTime = Math.min(...(pubs as number[]));
     } else {
-      source = "demo-static";
-      publishTime = startSec;
+      source = "pyth";
+      publishTime = Math.min(...(pubs as number[]));
     }
-    const status = marketStatus({ source, publishTime, nowSec: Math.floor(realNow() / 1000) });
+    const status = opts.forceStatus?.[id] ?? marketStatus({ source, publishTime, nowSec: Math.floor(realNow() / 1000) });
     const forwards = Object.fromEntries(TENORS.map((t) => [t, forwardFor(id, spot, rates, t)])) as Record<Tenor, number>;
     const best = offers.filter((o) => o.market === id).reduce<number | null>((acc, o) => (acc === null || o.spreadBps < acc ? o.spreadBps : acc), null);
     return { id, group: m.group, base: m.base, quote: m.quote, spot, source, publishTime, status, forwards, carryPct: carryPct(id, rates), im: m.im, bestSpreadBps: best };
@@ -201,10 +233,13 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
     return [p1, p2, p3, p4, p5];
   }
 
+  const seedHistory = opts.seedDemoPositions ?? true;
   function ensurePositions(): InternalPosition[] {
-    if (!positions) positions = seedPositions();
+    if (!positions) positions = seedHistory ? seedPositions().map((p) => ({ ...p, history: true })) : [];
     return positions;
   }
+  /** Positions the user can see: their own, plus demo history while demo mode is on. */
+  const visible = () => ensurePositions().filter((p) => !p.history || demo.demoMode);
 
   function markOf(p: InternalPosition): number {
     const q = quoteFor(p.market);
@@ -217,7 +252,7 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
     const mark = terminal ? (p.finalMark ?? p.strike) : markOf(p);
     const pnl = terminal ? (p.finalPnlUsd ?? 0) : round2(pnlUsd(p.market, p.side, p.quantity, p.strike, mark));
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { breachCount, finalMark, finalPnlUsd, ...rest } = p;
+    const { breachCount, finalMark, finalPnlUsd, history, ...rest } = p;
     return { ...rest, pnlUsd: pnl, markPrice: mark };
   }
 
@@ -259,8 +294,9 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
 
   function preflightSync(quote: LadderQuote): Preflight {
     if (!wallet.connected) return { ok: false, reason: "no-wallet" };
+    if ((wallet.solBalance ?? 0) <= 0) return { ok: false, reason: "need-sol" };
     const q = quoteFor(quote.market);
-    if (q.status !== "OPEN") return { ok: false, reason: "market-closed", status: q.status };
+    if (isPaused(q.status)) return { ok: false, reason: "market-closed", status: q.status };
     if (quote.rungs.some((r) => !r.offerId)) return { ok: false, reason: "no-offer" };
     const bal = wallet.balances[quote.mint];
     if (bal < quote.requiredUsd) return { ok: false, reason: "need-tokens", requiredUsd: quote.requiredUsd, balanceUsd: bal };
@@ -269,25 +305,26 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-  positions = seedPositions();
+  positions = null;
+  ensurePositions();
 
   const provider: ParityData & { _debug: () => unknown } = {
     async getMarkets() {
-      await refreshLive();
+      refreshLive();
       return MARKETS.map((m) => quoteFor(m.id));
     },
     async getRates() { return rates.map((r) => ({ ...r })); },
     async getOffers(market) { return offers.filter((o) => !market || o.market === market); },
     async getPositions() {
-      await refreshLive();
-      return [...ensurePositions()].sort((a, b) => b.openedAt - a.openedAt).map(present);
+      refreshLive();
+      return [...visible()].sort((a, b) => b.openedAt - a.openedAt).map(present);
     },
     async getWallet() { return { ...wallet, balances: { ...wallet.balances } }; },
     async getDemo() { return { ...demo, shocks: { ...demo.shocks } }; },
     async getDispatchLog() { return [...log]; },
     async getFeedHealth(): Promise<FeedHealth> {
-      await refreshLive();
-      return { live: live.ok, checkedAt: live.checkedAt || null, note: live.note };
+      refreshLive();
+      return { live: live.ok && live.provider === "pyth", checkedAt: live.checkedAt || null, note: live.note };
     },
 
     async connect() {
@@ -307,6 +344,14 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
       wallet.balances[mint] = round2(wallet.balances[mint] + FAUCET_AMOUNT);
       notify();
       return { mint, amount: FAUCET_AMOUNT, balance: wallet.balances[mint], signature: fakeBase58(64, rnd) };
+    },
+
+    async requestSol() {
+      if (!wallet.connected) throw new Error("Connect a wallet first.");
+      await sleep(opts.offline ? 0 : 600);
+      wallet.solBalance = round2((wallet.solBalance ?? 0) + 1);
+      notify();
+      return { amount: 1, balance: wallet.solBalance, signature: fakeBase58(64, rnd) };
     },
 
     async quoteLadder(req) { return quoteLadderSync(req); },
@@ -338,6 +383,17 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
       notify();
       return { signature: fakeBase58(88, rnd), positions: created.map(present) };
     },
+    async lockedByMonth(market, side) {
+      const out: Record<number, number> = {};
+      const t = nowSec();
+      for (const p of visible()) {
+        if (p.market !== market || p.side !== side) continue;
+        if (p.status === "Settled" || p.status === "Liquidated" || p.maturity <= t) continue;
+        const month = Math.min(6, Math.max(1, Math.round((p.maturity - t) / (30 * DAY))));
+        out[month] = round2((out[month] ?? 0) + p.notionalUsd);
+      }
+      return out;
+    },
     async addMargin(positionId, amountUsd) {
       const p = ensurePositions().find((x) => x.id === positionId);
       if (!p) throw new Error("Unknown position");
@@ -356,7 +412,7 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
     demo: {
       async setDemoMode(on) {
         demo = { ...demo, demoMode: on };
-        return done(entry(on ? "DEMO MODE ON" : "DEMO MODE OFF", on ? "Demo prices supersede Pyth; markets open." : "Pyth prices only; markets follow real hours."));
+        return done(entry(on ? "DEMO MODE ON" : "DEMO MODE OFF", on ? "Demo prices supersede the feed; markets open; demo coupons No. 0001–0005 shown." : "Real prices only (Pyth with a key, else ECB reference); markets follow real hours; demo coupons hidden."));
       },
       async shock(market, pct) {
         if (!demo.demoMode) return done(entry(`SHOCK ${market} ${pct > 0 ? "+" : ""}${pct}%`, "Refused — demo mode is off."));
@@ -377,19 +433,19 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
       },
       async markNow() {
         let called = 0, breached = 0, healthy = 0;
-        for (const p of ensurePositions()) {
+        for (const p of visible()) {
           if (p.status === "Settled" || p.status === "Liquidated") continue;
           const eq = p.marginUsd + present(p).pnlUsd;
           if (eq < PROTOCOL.liqEquity * p.imUsd) { p.breachCount += 1; breached += 1; if (p.status === "Open") p.status = "Called"; }
           else if (eq < PROTOCOL.callEquity * p.imUsd) { p.breachCount = 0; called += 1; if (p.status === "Open") p.status = "Called"; }
           else { p.breachCount = 0; healthy += 1; if (p.status === "Called") p.status = "Open"; }
         }
-        const maxBreach = Math.max(0, ...ensurePositions().map((p) => p.breachCount));
+        const maxBreach = Math.max(0, ...visible().map((p) => p.breachCount));
         return done(entry("MARK NOW", `${healthy} healthy · ${called} on call · ${breached} below 20%${breached ? ` (fresh mark ${Math.min(maxBreach, LIQ_CONFIRM_MARKS)}/${LIQ_CONFIRM_MARKS})` : ""}`));
       },
       async liquidate() {
         let partial = 0, full = 0, waiting = 0;
-        for (const p of ensurePositions()) {
+        for (const p of visible()) {
           if (p.status === "Settled" || p.status === "Liquidated") continue;
           const pres = present(p);
           const eq = p.marginUsd + pres.pnlUsd;
@@ -431,7 +487,7 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
       async settle() {
         let n = 0;
         const t = nowSec();
-        for (const p of ensurePositions()) {
+        for (const p of visible()) {
           if (p.status === "Settled" || p.status === "Liquidated" || p.maturity > t) continue;
           const spot = quoteFor(p.market).spot;
           p.finalMark = spot;
@@ -444,10 +500,10 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
         return done(entry("SETTLE", n === 0 ? "No coupon has reached its settlement date." : `${n} coupon${n > 1 ? "s" : ""} settled at spot; payouts to owners' token accounts.`));
       },
       async reset() {
-        demo = { demoMode: true, clockOffsetDays: 0, shocks: {} };
+        demo = { demoMode: false, clockOffsetDays: 0, shocks: {} };
         rates = SEED_RATES.map((r) => ({ ...r, updatedAt: nowSec() }));
         positions = null;
-        return done(entry("RESET", "Demo prices, clock, rates and demo coupons restored."));
+        return done(entry("RESET", "Back to the load state: demo mode off, clock, rates and demo coupons restored."));
       },
     },
 

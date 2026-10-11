@@ -3,7 +3,7 @@ import { createMockProvider } from "./mockProvider";
 
 describe("mock provider demo flow", () => {
   it("gap → three marks → partial liquidation; ladder lock lands in positions", async () => {
-    const d = createMockProvider({ offline: true, connected: true, balances: { USDC: 0 } });
+    const d = createMockProvider({ offline: true, demoMode: true, connected: true, balances: { USDC: 0 } });
     await d.faucet("USDC");
     const q = await d.quoteLadder({ market: "USD/TRY", side: "short", mint: "USDC", rungs: [{ month: 1, tenorDays: 30, amount: 2000 }] });
     expect(await d.preflight(q)).toEqual({ ok: true });

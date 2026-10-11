@@ -19,9 +19,10 @@ export const FEEDS = {
 export type FeedKey = keyof typeof FEEDS;
 
 /**
- * Static demo spots used when no live feed is reachable.
- * FX: ECB reference rates of 9 Oct 2026 (via Frankfurter); USD/CNH uses CNY.
- * Metals: round demo placeholders, not market prices.
+ * Seed spots, available synchronously so the first paint never waits on the network.
+ * FX: ECB reference rates of 9 Oct 2026 (via Frankfurter; USD/CNH uses CNY as a proxy),
+ * shown as REF until a fresher reference or a live feed overlays them.
+ * Metals: round demo placeholders, not market prices — always labelled "demo".
  */
 export const DEMO_SPOTS: Record<FeedKey, number> = {
   "USD/TRY": 49.173,
@@ -37,6 +38,15 @@ export const DEMO_SPOTS: Record<FeedKey, number> = {
   "XAU/USD": 4000,
   "XAG/USD": 48,
 };
+
+/** Date of the seeded ECB reference rates (ECB publishes around 14:15 CET). */
+export const SEED_REF_DATE = "2026-10-09";
+
+/** Feeds the free reference source cannot supply; they stay demo placeholders without a Pyth key. */
+export const DEMO_ONLY_FEEDS: FeedKey[] = ["XAU/USD", "XAG/USD"];
+
+/** Unix seconds for an ECB reference date (fixing ≈ 14:15 CET ≈ 12:15 UTC). */
+export const refDateToSec = (date: string): number => Math.floor(Date.parse(`${date}T12:15:00Z`) / 1000);
 
 export const TROY_OUNCE_GRAMS = 31.1034768;
 

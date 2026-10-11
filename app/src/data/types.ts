@@ -17,11 +17,15 @@ export type RateCode =
   | "USD" | "TRY" | "EUR" | "GBP" | "CHF" | "JPY" | "CNH"
   | "MXN" | "BRL" | "ZAR" | "INR" | "XAU" | "XAG";
 
-/** OPEN: fresh price (or demo override). CLOSED: last publish older than 120 s (weekend/holiday). STALE: no live feed reachable, static demo spot shown. */
-export type MarketStatus = "OPEN" | "CLOSED" | "STALE";
+/**
+ * OPEN: fresh price (or demo override). CLOSED: last publish older than 120 s (weekend/holiday).
+ * STALE: no feed for this market, a static demo spot is shown.
+ * REF: priced off a daily reference rate (ECB via Frankfurter) — not a live feed. (added in pass 2)
+ */
+export type MarketStatus = "OPEN" | "CLOSED" | "STALE" | "REF";
 
-/** Where a spot came from. */
-export type SpotSource = "pyth" | "demo-override" | "demo-static";
+/** Where a spot came from. "ecb-ref" = ECB daily reference rate (added in pass 2). */
+export type SpotSource = "pyth" | "demo-override" | "demo-static" | "ecb-ref";
 
 export type Tenor = 30 | 90 | 180;
 
@@ -113,6 +117,8 @@ export interface WalletState {
   address: string | null;
   label: string | null;
   balances: Record<Mint, number>;
+  /** test SOL for fees (added in pass 2; undefined = provider does not track it) */
+  solBalance?: number;
 }
 
 export interface LadderRung {
@@ -159,6 +165,8 @@ export interface LadderQuote {
 export type Preflight =
   | { ok: true }
   | { ok: false; reason: "no-wallet" }
+  /** added in pass 2: the wallet holds no test SOL for fees */
+  | { ok: false; reason: "need-sol" }
   | { ok: false; reason: "need-tokens"; requiredUsd: number; balanceUsd: number }
   | { ok: false; reason: "market-closed"; status: MarketStatus }
   | { ok: false; reason: "no-offer" };
@@ -212,12 +220,20 @@ export interface ParityData {
   connect(): Promise<WalletState>;
   disconnect(): Promise<WalletState>;
   faucet(mint: Mint): Promise<FaucetResult>;
+  /** Added in pass 2: devnet SOL airdrop for fees (mock: 1 test SOL). */
+  requestSol(): Promise<{ amount: number; balance: number; signature: string }>;
 
   // Trading
   quoteLadder(req: LadderRequest): Promise<LadderQuote>;
   preflight(quote: LadderQuote): Promise<Preflight>;
   lockLadder(req: LadderRequest): Promise<LockResult>;
   addMargin(positionId: string, amountUsd: number): Promise<Position>;
+  /**
+   * Added in pass 2. USD notional already locked on this market and side, bucketed
+   * by settlement month (1 = settles within ~30 days … 6), live positions only.
+   * The Advisor nets these out so a check-in never double-locks a month.
+   */
+  lockedByMonth(market: MarketId, side: Side): Promise<Record<number, number>>;
 
   // Dispatch (admin / demo; devnet only)
   demo: {

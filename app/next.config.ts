@@ -2,6 +2,7 @@ import path from "node:path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  devIndicators: false,
   // The advisor package lives one level up (../advisor) and ships TypeScript source.
   transpilePackages: ["advisor"],
   turbopack: {
