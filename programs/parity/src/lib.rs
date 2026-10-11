@@ -8,6 +8,7 @@ pub mod instructions;
 pub mod math;
 pub mod oracle;
 pub mod state;
+pub mod waterfall;
 
 pub use instructions::*;
 use state::{MarketArgs, RiskParams, Side};
@@ -82,5 +83,15 @@ pub mod parity {
     /// Taker opens a margined forward position against an offer (one PDA per offer counter).
     pub fn take_offer(ctx: Context<TakeOffer>, notional_usd: u64, tenor_days: u16) -> Result<()> {
         instructions::take::handle_take_offer(ctx, notional_usd, tenor_days)
+    }
+
+    /// Permissionless mark-to-market: fresh price required; updates status and breach count.
+    pub fn mark(ctx: Context<Mark>) -> Result<()> {
+        instructions::risk::handle_mark(ctx)
+    }
+
+    /// Owner of `side` tops up that side's margin (status is re-evaluated by the next mark).
+    pub fn add_margin(ctx: Context<AddMargin>, side: Side, amount: u64) -> Result<()> {
+        instructions::risk::handle_add_margin(ctx, side, amount)
     }
 }

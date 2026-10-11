@@ -639,3 +639,54 @@ pub fn take_offer(c: &mut Ctx, offer: Pubkey, price_a: Pubkey, price_b: Pubkey, 
     let i = take_offer_ix(c, taker.pubkey(), offer, o.position_counter, price_a, price_b, notional_usd, tenor_days);
     send(c, &[i], &[&taker])
 }
+
+// ---------------------------------------------------------------------------------------------
+// mark / add_margin helpers
+// ---------------------------------------------------------------------------------------------
+
+/// Permissionless `mark` instruction for `position` (market and rate PDAs read from chain).
+pub fn mark_ix(c: &Ctx, position: Pubkey, price_a: Pubkey, price_b: Pubkey) -> Instruction {
+    let p: parity::state::Position = c.fetch(position);
+    let m: parity::state::Market = c.fetch(market_pda(p.market_id));
+    ix(
+        parity::accounts::Mark {
+            config: config_pda(),
+            position,
+            market: market_pda(p.market_id),
+            rate_base: rate_pda(m.base),
+            rate_quote: rate_pda(m.quote),
+            demo_state: demo_pda(),
+            price_a,
+            price_b,
+        },
+        parity::instruction::Mark {},
+    )
+}
+
+/// Mark `position`, paid for by `payer`.
+pub fn mark_as(c: &mut Ctx, payer: &Keypair, position: Pubkey, price_a: Pubkey, price_b: Pubkey) -> TxResult {
+    let i = mark_ix(c, position, price_a, price_b);
+    send(c, &[i], &[payer])
+}
+
+/// `add_margin(side, amount)` from `owner`'s ATA for the position's mint.
+pub fn add_margin_ix(c: &Ctx, owner: Pubkey, position: Pubkey, side: Side, amount: u64) -> Instruction {
+    let p: parity::state::Position = c.fetch(position);
+    let tp = c.token_program_of(p.mint);
+    ix(
+        parity::accounts::AddMargin {
+            owner,
+            position,
+            mint: p.mint,
+            owner_token: ata(owner, p.mint, tp),
+            vault: vault_pda(p.mint),
+            token_program: tp,
+        },
+        parity::instruction::AddMargin { side, amount },
+    )
+}
+
+pub fn add_margin(c: &mut Ctx, owner: &Keypair, position: Pubkey, side: Side, amount: u64) -> TxResult {
+    let i = add_margin_ix(c, owner.pubkey(), position, side, amount);
+    send(c, &[i], &[owner])
+}
