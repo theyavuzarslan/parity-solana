@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { forwardPrice, hedgeRatio, ladder, scenarios, ewma } from '../src';
+import { forwardPrice, hedgeRatio, ladder, scenarios, ewma, effectiveSigma, expectedSpot } from '../src';
 describe('advisor', () => {
   it('forward matches program example', () => { expect(forwardPrice(20, 0.04, 360, 0.10, 360, 90)).toBeCloseTo(20.2970, 3); });
   it('seller with positive premium hedges fully', () => {
@@ -25,7 +25,19 @@ describe('advisor', () => {
     expect(hedgeRatio({ direction: 'buy', spot: 1, forward: 1, expected: 1, sigmaAnnual: 0, days: 30, risk: 'balanced' })).toBe(1);
   });
   it('sigma floor applies', () => {
-    const b = { direction: 'buy' as const, spot: 42, forward: 45.8, expected: 45.0, days: 90, risk: 'balanced' as const };
-    expect(hedgeRatio({ ...b, sigmaAnnual: 0.0157 })).toBe(hedgeRatio({ ...b, sigmaAnnual: 0.10 }));
+    const b = { direction: 'buy' as const, spot: 42, forward: 43, expected: 42.8, days: 90, risk: 'balanced' as const };
+    const floored = hedgeRatio({ ...b, sigmaAnnual: 0.0157 });
+    expect(floored).toBeGreaterThan(0); expect(floored).toBeLessThan(1);
+    expect(floored).toBe(hedgeRatio({ ...b, sigmaAnnual: 0.10 }));
+    expect(floored).not.toBe(hedgeRatio({ ...b, sigmaAnnual: 0.30 }));
+  });
+  it('effectiveSigma floors only low values', () => {
+    expect(effectiveSigma(0.0157)).toBe(0.10); expect(effectiveSigma(0.3)).toBe(0.3);
+  });
+  it('expectedSpot applies simple drift', () => {
+    expect(expectedSpot(100, 0.365, 100)).toBeCloseTo(110, 6);
+  });
+  it('ladder scales by h<1', () => {
+    expect(ladder({ months: 2, monthlyExposure: 1000, h: 0.5 }).map(r => r.amount)).toEqual([500, 375]);
   });
 });

@@ -76,19 +76,19 @@
     },
     "XAU/USD": {
       "sigmaAnnual": 0.18,
-      "driftAnnual": 0.25,
-      "asOf": "2026-10-09",
+      "driftAnnual": 0,
+      "asOf": "n/a",
       "source": "fallback"
     },
     "XAG/USD": {
       "sigmaAnnual": 0.3,
-      "driftAnnual": 0.25,
-      "asOf": "2026-10-09",
+      "driftAnnual": 0,
+      "asOf": "n/a",
       "source": "fallback"
     },
     "GAU/TRY": {
       "sigmaAnnual": 0.1807,
-      "driftAnnual": 0.4101,
+      "driftAnnual": 0.1601,
       "asOf": "2026-10-09",
       "source": "frankfurter-ecb (USD/TRY) + fallback (XAU)"
     }
