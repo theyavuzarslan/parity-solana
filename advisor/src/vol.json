@@ -1,81 +1,96 @@
 {
-  "source": "fallback",
-  "note": "Approximate placeholder values; Pyth benchmarks tradingview shim returned 404/401 on 2026-10-12. Regenerate with pnpm build-vol.",
+  "source": "frankfurter-ecb",
+  "note": "FX from Frankfurter (ECB reference rates), ~400d daily log returns, EWMA lambda 0.94. USD/CNH uses CNY as proxy. XAU/USD and XAG/USD are approximate fallbacks (no free keyless source); GAU/TRY combines fallback XAU with real USD/TRY assuming zero correlation.",
   "vol": {
     "USD/TRY": {
-      "sigmaAnnual": 0.14,
-      "driftAnnual": 0.3,
-      "asOf": "2026-10-12"
+      "sigmaAnnual": 0.0157,
+      "driftAnnual": 0.1601,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
     },
     "EUR/TRY": {
-      "sigmaAnnual": 0.15,
-      "driftAnnual": 0.31,
-      "asOf": "2026-10-12"
+      "sigmaAnnual": 0.0552,
+      "driftAnnual": 0.1213,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
     },
     "GBP/TRY": {
-      "sigmaAnnual": 0.15,
-      "driftAnnual": 0.3,
-      "asOf": "2026-10-12"
-    },
-    "GAU/TRY": {
-      "sigmaAnnual": 0.2,
-      "driftAnnual": 0.55,
-      "asOf": "2026-10-12"
+      "sigmaAnnual": 0.0487,
+      "driftAnnual": 0.1426,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
     },
     "EUR/USD": {
-      "sigmaAnnual": 0.07,
-      "driftAnnual": 0.01,
-      "asOf": "2026-10-12"
+      "sigmaAnnual": 0.0577,
+      "driftAnnual": -0.0387,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
     },
     "GBP/USD": {
-      "sigmaAnnual": 0.08,
-      "driftAnnual": 0.0,
-      "asOf": "2026-10-12"
+      "sigmaAnnual": 0.0482,
+      "driftAnnual": -0.0175,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
     },
     "USD/CHF": {
-      "sigmaAnnual": 0.07,
-      "driftAnnual": -0.02,
-      "asOf": "2026-10-12"
+      "sigmaAnnual": 0.0648,
+      "driftAnnual": 0.0313,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
     },
     "USD/JPY": {
-      "sigmaAnnual": 0.1,
-      "driftAnnual": 0.0,
-      "asOf": "2026-10-12"
+      "sigmaAnnual": 0.0793,
+      "driftAnnual": 0.0606,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
     },
     "USD/CNH": {
-      "sigmaAnnual": 0.04,
-      "driftAnnual": 0.0,
-      "asOf": "2026-10-12"
+      "sigmaAnnual": 0.0108,
+      "driftAnnual": -0.0582,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb (CNY proxy)"
     },
     "USD/MXN": {
-      "sigmaAnnual": 0.12,
-      "driftAnnual": 0.0,
-      "asOf": "2026-10-12"
+      "sigmaAnnual": 0.1078,
+      "driftAnnual": -0.0236,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
     },
     "USD/BRL": {
-      "sigmaAnnual": 0.13,
-      "driftAnnual": 0.0,
-      "asOf": "2026-10-12"
+      "sigmaAnnual": 0.1748,
+      "driftAnnual": -0.0728,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
     },
     "USD/ZAR": {
-      "sigmaAnnual": 0.14,
-      "driftAnnual": 0.0,
-      "asOf": "2026-10-12"
+      "sigmaAnnual": 0.0983,
+      "driftAnnual": -0.0599,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
     },
     "USD/INR": {
-      "sigmaAnnual": 0.04,
-      "driftAnnual": 0.02,
-      "asOf": "2026-10-12"
+      "sigmaAnnual": 0.0334,
+      "driftAnnual": 0.083,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
     },
     "XAU/USD": {
       "sigmaAnnual": 0.18,
       "driftAnnual": 0.25,
-      "asOf": "2026-10-12"
+      "asOf": "2026-10-09",
+      "source": "fallback"
     },
     "XAG/USD": {
       "sigmaAnnual": 0.3,
       "driftAnnual": 0.25,
-      "asOf": "2026-10-12"
+      "asOf": "2026-10-09",
+      "source": "fallback"
+    },
+    "GAU/TRY": {
+      "sigmaAnnual": 0.1807,
+      "driftAnnual": 0.4101,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb (USD/TRY) + fallback (XAU)"
     }
   }
 }

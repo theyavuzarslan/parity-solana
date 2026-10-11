@@ -2,48 +2,56 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { ewma } from '../src/advisor';
 
-const BASE = 'https://benchmarks.pyth.network/v1/shims/tradingview/history';
-const SYMBOLS: Record<string, string> = {
-  'USD/TRY': 'FX.USD/TRY', 'EUR/USD': 'FX.EUR/USD', 'GBP/USD': 'FX.GBP/USD', 'USD/CHF': 'FX.USD/CHF',
-  'USD/JPY': 'FX.USD/JPY', 'USD/CNH': 'FX.USD/CNH', 'USD/MXN': 'FX.USD/MXN', 'USD/BRL': 'FX.USD/BRL',
-  'USD/ZAR': 'FX.USD/ZAR', 'USD/INR': 'FX.USD/INR', 'XAU/USD': 'Metal.XAU/USD', 'XAG/USD': 'Metal.XAG/USD',
-};
-const OZ_GRAM = 31.1034768;
-type Series = Map<number, number>; // day index -> close
+const API = 'https://api.frankfurter.dev/v1';
+type Series = Map<string, number>; // ISO date -> close
+type Entry = { sigmaAnnual: number; driftAnnual: number; asOf: string; source: string };
 
-async function fetchSeries(sym: string): Promise<Series> {
-  const now = Math.floor(Date.now() / 1000);
-  const url = `${BASE}?symbol=${encodeURIComponent(sym)}&resolution=D&from=${now - 400 * 86400}&to=${now}`;
+// Metals have no free keyless source: labelled approximations.
+const METAL_FALLBACK = { 'XAU/USD': { sigmaAnnual: 0.18, driftAnnual: 0.25 }, 'XAG/USD': { sigmaAnnual: 0.3, driftAnnual: 0.25 } };
+
+async function fetchRates(): Promise<Record<string, Record<string, number>>> {
+  const to = new Date(); const from = new Date(Date.now() - 400 * 86400_000);
+  const d = (x: Date) => x.toISOString().slice(0, 10);
+  const url = `${API}/${d(from)}..${d(to)}?base=USD&symbols=TRY,EUR,GBP,CHF,JPY,CNY,MXN,BRL,ZAR,INR`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`${sym}: HTTP ${res.status}`);
-  const j = (await res.json()) as { s?: string; t: number[]; c: number[] };
-  if (!j.t?.length) throw new Error(`${sym}: empty response`);
-  return new Map(j.t.map((t, i) => [Math.floor(t / 86400), j.c[i]]));
+  if (!res.ok) throw new Error(`frankfurter: HTTP ${res.status}`);
+  const j = (await res.json()) as { rates: Record<string, Record<string, number>> };
+  if (!j.rates || !Object.keys(j.rates).length) throw new Error('frankfurter: empty response');
+  return j.rates;
 }
 
-function combine(a: Series, b: Series, f: (x: number, y: number) => number): Series {
-  const out: Series = new Map();
-  for (const [d, x] of a) { const y = b.get(d); if (y !== undefined) out.set(d, f(x, y)); }
-  return out;
+function series(rates: Record<string, Record<string, number>>, f: (r: Record<string, number>) => number): Series {
+  return new Map(Object.entries(rates).sort().map(([d, r]) => [d, f(r)]));
 }
 
-function stats(s: Series, asOf: string) {
-  const closes = [...s.entries()].sort((x, y) => x[0] - y[0]).map(([, c]) => c);
+function stats(s: Series) {
+  const closes = [...s.values()];
   const r = closes.slice(1).map((c, i) => Math.log(c / closes[i]));
   const mean = r.reduce((a, b) => a + b, 0) / r.length;
-  return { sigmaAnnual: +ewma(r).toFixed(4), driftAnnual: +(mean * 252).toFixed(4), asOf };
+  return { sigmaAnnual: +ewma(r).toFixed(4), driftAnnual: +(mean * 252).toFixed(4) };
 }
 
 async function main() {
-  const S: Record<string, Series> = {};
-  for (const [k, sym] of Object.entries(SYMBOLS)) S[k] = await fetchSeries(sym);
-  S['EUR/TRY'] = combine(S['EUR/USD'], S['USD/TRY'], (a, b) => a * b);
-  S['GBP/TRY'] = combine(S['GBP/USD'], S['USD/TRY'], (a, b) => a * b);
-  S['GAU/TRY'] = combine(S['XAU/USD'], S['USD/TRY'], (a, b) => (a * b) / OZ_GRAM);
-  const asOf = new Date().toISOString().slice(0, 10);
-  const vol = Object.fromEntries(Object.entries(S).map(([k, s]) => [k, stats(s, asOf)]));
+  const rates = await fetchRates();
+  const asOf = Object.keys(rates).sort().pop()!;
+  const defs: Record<string, (r: Record<string, number>) => number> = {
+    'USD/TRY': (r) => r.TRY, 'EUR/TRY': (r) => r.TRY / r.EUR, 'GBP/TRY': (r) => r.TRY / r.GBP,
+    'EUR/USD': (r) => 1 / r.EUR, 'GBP/USD': (r) => 1 / r.GBP, 'USD/CHF': (r) => r.CHF, 'USD/JPY': (r) => r.JPY,
+    'USD/CNH': (r) => r.CNY, // proxy: onshore CNY used for offshore CNH
+    'USD/MXN': (r) => r.MXN, 'USD/BRL': (r) => r.BRL, 'USD/ZAR': (r) => r.ZAR, 'USD/INR': (r) => r.INR,
+  };
+  const vol: Record<string, Entry> = {};
+  for (const [k, f] of Object.entries(defs)) vol[k] = { ...stats(series(rates, f)), asOf, source: k === 'USD/CNH' ? 'frankfurter-ecb (CNY proxy)' : 'frankfurter-ecb' };
+  for (const [k, v] of Object.entries(METAL_FALLBACK)) vol[k] = { ...v, asOf, source: 'fallback' };
+  // GAU/TRY = XAU/USD x USD/TRY / 31.1035: variances add (zero correlation assumed), drifts add.
+  const x = vol['XAU/USD'], t = vol['USD/TRY'];
+  vol['GAU/TRY'] = {
+    sigmaAnnual: +Math.sqrt(x.sigmaAnnual ** 2 + t.sigmaAnnual ** 2).toFixed(4),
+    driftAnnual: +(x.driftAnnual + t.driftAnnual).toFixed(4), asOf, source: 'frankfurter-ecb (USD/TRY) + fallback (XAU)',
+  };
   const out = fileURLToPath(new URL('../src/vol.json', import.meta.url));
-  writeFileSync(out, JSON.stringify({ source: 'pyth-benchmarks', vol }, null, 2) + '\n');
+  const note = 'FX from Frankfurter (ECB reference rates), ~400d daily log returns, EWMA lambda 0.94. USD/CNH uses CNY as proxy. XAU/USD and XAG/USD are approximate fallbacks (no free keyless source); GAU/TRY combines fallback XAU with real USD/TRY assuming zero correlation.';
+  writeFileSync(out, JSON.stringify({ source: 'frankfurter-ecb', note, vol }, null, 2) + '\n');
   console.log(`wrote ${Object.keys(vol).length} entries to ${out}`);
 }
 

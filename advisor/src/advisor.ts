@@ -44,4 +44,4 @@ export function ewma(returns: number[], lambda = 0.94): number {
   return Math.sqrt(v * 252);
 }
 
-export type VolEntry = { sigmaAnnual: number; driftAnnual: number; asOf: string };
+export type VolEntry = { sigmaAnnual: number; driftAnnual: number; asOf: string; source?: string };
