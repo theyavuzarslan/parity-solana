@@ -11,7 +11,7 @@ use crate::{
     errors::ParityError,
     math::{forward, pnl_long_usd},
     oracle::{self, PriceRead},
-    state::{effective_now, Config, DemoState, Market, Position, Rate, Side, Status},
+    state::{effective_now, last_publish_floor, Config, DemoState, Market, Position, Rate, Side, Status},
     waterfall::loser_equity,
 };
 
@@ -62,7 +62,7 @@ pub fn evaluate(
 }
 
 /// `equity < bps/1e4 × im`, cross-multiplied in i128 (equity may be negative).
-fn below(equity: i128, im: u64, bps: u16) -> bool {
+pub(crate) fn below(equity: i128, im: u64, bps: u16) -> bool {
     equity.saturating_mul(10_000) < (im as i128) * (bps as i128)
 }
 
@@ -107,7 +107,7 @@ pub fn handle_mark(ctx: Context<Mark>) -> Result<()> {
         &a.price_b.to_account_info(),
         now,
     )?;
-    require!(px.publish_time > pos.last_publish_time, ParityError::StalePublishTime);
+    require!(px.publish_time > last_publish_floor(pos.last_publish_time, now), ParityError::StalePublishTime);
     let (pnl_long, _loser, equity) = evaluate(pos, &a.market, &a.rate_base, &a.rate_quote, &px, now)?;
     let im = pos.im_per_side;
     let below_call = below(equity, im, params.call_equity_bps);
@@ -127,6 +127,7 @@ pub fn handle_mark(ctx: Context<Mark>) -> Result<()> {
         }
     } else {
         pos.breach_count = 0;
+        pos.last_breach_time = 0;
     }
     pos.last_publish_time = px.publish_time;
 

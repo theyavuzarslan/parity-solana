@@ -94,4 +94,16 @@ pub mod parity {
     pub fn add_margin(ctx: Context<AddMargin>, side: Side, amount: u64) -> Result<()> {
         instructions::risk::handle_add_margin(ctx, side, amount)
     }
+
+    /// Any signer liquidates a confirmed, still-breaching position: partial first, full if the
+    /// reduced position is still below the threshold (or it was already partially liquidated).
+    /// The caller's reward goes to `caller_ata`; payouts go to the long/short canonical ATAs.
+    pub fn liquidate(ctx: Context<Liquidate>) -> Result<()> {
+        instructions::close::handle_liquidate(ctx)
+    }
+
+    /// Permissionless settlement at or after maturity at spot (τ = 0) through the loss waterfall.
+    pub fn settle(ctx: Context<Settle>) -> Result<()> {
+        instructions::close::handle_settle(ctx)
+    }
 }

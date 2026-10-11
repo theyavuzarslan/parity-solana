@@ -690,3 +690,88 @@ pub fn add_margin(c: &mut Ctx, owner: &Keypair, position: Pubkey, side: Side, am
     let i = add_margin_ix(c, owner.pubkey(), position, side, amount);
     send(c, &[i], &[owner])
 }
+
+// ---------------------------------------------------------------------------------------------
+// liquidate / settle helpers
+// ---------------------------------------------------------------------------------------------
+
+/// `liquidate` instruction: `caller` receives the reward into `caller_ata`; payouts go to the
+/// canonical ATAs of `position.long` / `position.short` (override with `ix.accounts[..]` in tests).
+pub fn liquidate_ix(c: &Ctx, caller: Pubkey, caller_ata: Pubkey, position: Pubkey, price_a: Pubkey, price_b: Pubkey) -> Instruction {
+    let p: parity::state::Position = c.fetch(position);
+    let m: parity::state::Market = c.fetch(market_pda(p.market_id));
+    let tp = c.token_program_of(p.mint);
+    ix(
+        parity::accounts::Liquidate {
+            caller,
+            config: config_pda(),
+            position,
+            market: market_pda(p.market_id),
+            rate_base: rate_pda(m.base),
+            rate_quote: rate_pda(m.quote),
+            demo_state: demo_pda(),
+            price_a,
+            price_b,
+            mint: p.mint,
+            vault: vault_pda(p.mint),
+            insurance: insurance_pda(p.mint),
+            caller_ata,
+            long_ata: ata(p.long, p.mint, tp),
+            short_ata: ata(p.short, p.mint, tp),
+            token_program: tp,
+        },
+        parity::instruction::Liquidate {},
+    )
+}
+
+/// Liquidate `position` as `caller` (reward to the caller's canonical ATA for the mint).
+pub fn liquidate(c: &mut Ctx, caller: &Keypair, position: Pubkey, price_a: Pubkey, price_b: Pubkey) -> TxResult {
+    let p: parity::state::Position = c.fetch(position);
+    let caller_ata = c.ata_of(caller.pubkey(), p.mint);
+    let i = liquidate_ix(c, caller.pubkey(), caller_ata, position, price_a, price_b);
+    send(c, &[i], &[caller])
+}
+
+/// Permissionless `settle` instruction (payouts to the canonical long/short ATAs).
+pub fn settle_ix(c: &Ctx, position: Pubkey, price_a: Pubkey, price_b: Pubkey) -> Instruction {
+    let p: parity::state::Position = c.fetch(position);
+    let m: parity::state::Market = c.fetch(market_pda(p.market_id));
+    let tp = c.token_program_of(p.mint);
+    ix(
+        parity::accounts::Settle {
+            config: config_pda(),
+            position,
+            market: market_pda(p.market_id),
+            rate_base: rate_pda(m.base),
+            rate_quote: rate_pda(m.quote),
+            demo_state: demo_pda(),
+            price_a,
+            price_b,
+            mint: p.mint,
+            vault: vault_pda(p.mint),
+            insurance: insurance_pda(p.mint),
+            long_ata: ata(p.long, p.mint, tp),
+            short_ata: ata(p.short, p.mint, tp),
+            token_program: tp,
+        },
+        parity::instruction::Settle {},
+    )
+}
+
+/// Settle `position`, paid for by `payer`.
+pub fn settle(c: &mut Ctx, payer: &Keypair, position: Pubkey, price_a: Pubkey, price_b: Pubkey) -> TxResult {
+    let i = settle_ix(c, position, price_a, price_b);
+    send(c, &[i], &[payer])
+}
+
+/// Every event of type `E` in a transaction's logs, in order.
+pub fn events<E: anchor_lang::Event + anchor_lang::AnchorDeserialize>(meta: &litesvm::types::TransactionMetadata) -> Vec<E> {
+    use base64::Engine;
+    meta.logs
+        .iter()
+        .filter_map(|l| l.strip_prefix("Program data: "))
+        .map(|b64| base64::engine::general_purpose::STANDARD.decode(b64).unwrap())
+        .filter(|b| b.starts_with(E::DISCRIMINATOR))
+        .map(|b| E::deserialize(&mut &b[E::DISCRIMINATOR.len()..]).unwrap())
+        .collect()
+}
