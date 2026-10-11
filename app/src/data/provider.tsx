@@ -48,9 +48,18 @@ export function useParity(): Ctx {
  * Re-runs `load` whenever provider state changes (and every `pollMs` if set).
  * Keeps the previous value while refetching so numbers cross-fade instead of blanking.
  */
-export function useParityQuery<T>(load: (d: ParityData) => Promise<T>, deps: unknown[] = [], pollMs?: number) {
+export function useParityQuery<T>(
+  load: (d: ParityData) => Promise<T>,
+  deps: unknown[] = [],
+  pollMs?: number,
+  /** optional synchronous seed for the first render (e.g. d.peek?.markets()) */
+  initial?: (d: ParityData) => T | undefined,
+) {
   const { data, version } = useParity();
-  const [state, setState] = useState<{ value: T | undefined; error: string | null; loading: boolean }>({ value: undefined, error: null, loading: true });
+  const [state, setState] = useState<{ value: T | undefined; error: string | null; loading: boolean }>(() => {
+    const value = initial?.(data);
+    return { value, error: null, loading: value === undefined };
+  });
   const [tick, setTick] = useState(0);
 
   useEffect(() => {

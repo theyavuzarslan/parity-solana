@@ -428,3 +428,8 @@ input[type="number"] {
 [data-theme="solana"] .pos-row { box-shadow: 0 1px 0 oklch(100% 0 0 / 0.03) inset, 0 6px 16px oklch(0% 0 0 / 0.25); }
 [data-theme="solana"] .check-tick.bg-carbon { background: var(--color-navy); }
 [data-theme="solana"] .void-edge { opacity: 0.6; }
+[data-theme="solana"] [role="meter"] .bg-carbon { background: var(--color-navy-2); opacity: 0.55; }
+[data-theme="solana"] .bottom-tabs { background: var(--color-coupon); border-top: 1px solid var(--color-hairline); }
+[data-theme="solana"] .bottom-tabs a { color: var(--color-navy-2); }
+[data-theme="solana"] .bottom-tabs a[aria-current="page"] { color: var(--color-navy); }
+[data-theme="solana"] .bottom-tabs a:active { background: var(--color-hairline); }

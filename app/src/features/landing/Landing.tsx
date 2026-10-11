@@ -17,8 +17,8 @@ import { WalletButton } from "@/components/WalletButton";
 import { FAUCET_AMOUNT } from "@/data/mockProvider";
 
 export function Landing() {
-  const markets = useParityQuery((d) => d.getMarkets(), [], 30_000);
-  const rates = useParityQuery((d) => d.getRates());
+  const markets = useParityQuery((d) => d.getMarkets(), [], 30_000, (d) => d.peek?.markets());
+  const rates = useParityQuery((d) => d.getRates(), [], undefined, (d) => d.peek?.rates());
   const usdtry = markets.value?.find((m) => m.id === "USD/TRY");
   const rTry = rates.value?.find((r) => r.code === "TRY");
   const rUsd = rates.value?.find((r) => r.code === "USD");

@@ -122,6 +122,8 @@ export const monthName = (nowSec: number, tenorDays: number) => MONTH_NAMES[new 
  */
 export function whySentence(p: {
   rungs: PlannedRung[]; nowSec: number; direction: "sell" | "buy"; forwardAboveExpected: boolean; market: MarketId;
+  /** the user overrode the advised ratio to lock 100% */
+  override?: boolean;
 }): string {
   const live = p.rungs.filter((r) => r.amount > 0);
   if (!live.length) {
@@ -132,6 +134,7 @@ export function whySentence(p: {
   const parts = live.map((r) => `${Math.round(r.share * 100)}% of ${monthName(p.nowSec, r.tenorDays)}`);
   const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
   const lira = p.market.endsWith("/TRY");
+  if (p.override) return `Lock ${list} because you chose full cover over the Advisor's ratio.`;
   const reason = p.direction === "sell"
     ? p.forwardAboveExpected
       ? lira ? "the lira's high interest rate works in your favour" : "the rate gap works in your favour"

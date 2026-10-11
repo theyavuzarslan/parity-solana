@@ -249,4 +249,14 @@ export interface ParityData {
 
   /** Notifies after any state change so views can refetch. Returns unsubscribe. */
   subscribe(listener: () => void): () => void;
+
+  /**
+   * Added in pass 2 (optional): synchronous snapshots of cached reads, so the
+   * first paint (including the server render) shows seeded prices instead of
+   * waiting on the network. Providers without a cache omit it.
+   */
+  peek?: {
+    markets(): MarketQuote[];
+    rates(): Rate[];
+  };
 }

@@ -507,6 +507,11 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
       },
     },
 
+    peek: {
+      markets: () => MARKETS.map((m) => quoteFor(m.id)),
+      rates: () => rates.map((r) => ({ ...r })),
+    },
+
     subscribe(listener) {
       listeners.add(listener);
       return () => { listeners.delete(listener); };

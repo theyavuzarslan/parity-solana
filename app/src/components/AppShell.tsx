@@ -33,7 +33,7 @@ function Chrome({ children }: { children: ReactNode }) {
         <div className="flex items-center gap-2 border-t border-hairline px-4 py-1.5 md:px-8 xl:hidden">
           <span className="t-label rounded-[3px] border-[1.5px] border-navy px-1.5 py-0.5 text-xs text-navy">DEVNET</span>
           {demoMode ? <DemoChip /> : null}
-          <ThemeToggle className="ml-auto md:hidden" />
+          <ThemeToggle className="ml-auto inline-flex md:hidden" />
         </div>
       </header>
       <main id="main" className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-6 md:px-8 md:py-8">

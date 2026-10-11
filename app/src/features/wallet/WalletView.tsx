@@ -67,13 +67,13 @@ export function WalletView() {
               {demo.value?.demoMode ? " Coupons No. 0001–0005 are demo history (demo mode)." : ""}
             </p>
           </div>
-          <div className="text-right">
-            <span className="t-label block text-xs text-navy-2">Open marked PnL</span>
-            <Num className="pnl-display text-3xl font-semibold leading-none md:text-4xl" tone={totalPnl < 0 ? "red" : "carbon"}>
-              {active.length ? pnl.text : "—"}
-            </Num>
-            <span className="t-label mt-1 block text-sm text-navy-2">{active.length ? pnl.word : "no open tickets"}</span>
-          </div>
+          {active.length ? (
+            <div className="text-right">
+              <span className="t-label block text-xs text-navy-2">Open marked PnL</span>
+              <Num className="pnl-display text-3xl font-semibold leading-none md:text-4xl" tone={totalPnl < 0 ? "red" : "carbon"}>{pnl.text}</Num>
+              <span className="t-label mt-1 block text-sm text-navy-2">{pnl.word}</span>
+            </div>
+          ) : null}
         </div>
 
         {!positions.value ? (

@@ -24,3 +24,37 @@ describe("mock provider demo flow", () => {
     }
   });
 });
+
+describe("pass 2 additions", () => {
+  it("lockedByMonth buckets live positions by settlement month, per market and side", async () => {
+    const d = createMockProvider({ offline: true, connected: true, balances: { USDC: 5000 } });
+    expect(await d.lockedByMonth("USD/TRY", "short")).toEqual({});
+    await d.lockLadder({ market: "USD/TRY", side: "short", mint: "USDC", rungs: [{ month: 1, tenorDays: 30, amount: 1000 }, { month: 3, tenorDays: 90, amount: 500 }] });
+    expect(await d.lockedByMonth("USD/TRY", "short")).toEqual({ 1: 1000, 3: 500 });
+    expect(await d.lockedByMonth("USD/TRY", "long")).toEqual({});
+    expect(await d.lockedByMonth("EUR/TRY", "short")).toEqual({});
+  });
+
+  it("starts with demo mode off: reference prices (REF) are lockable, metals are demo (STALE), demo coupons hidden", async () => {
+    const d = createMockProvider({ offline: true });
+    const ms = await d.getMarkets();
+    expect(ms.find((m) => m.id === "USD/TRY")!.status).toBe("REF");
+    expect(ms.find((m) => m.id === "XAU/USD")!.source).toBe("demo-static");
+    expect(ms.find((m) => m.id === "GAU/TRY")!.status).toBe("STALE");
+    expect(await d.getPositions()).toEqual([]);
+    expect(d.peek!.markets().find((m) => m.id === "USD/TRY")!.spot).toBeGreaterThan(0);
+    await d.demo.setDemoMode(true);
+    expect((await d.getPositions()).length).toBe(5);
+  });
+
+  it("asks for test SOL after connecting, then for tokens", async () => {
+    const d = createMockProvider({ offline: true });
+    await d.connect();
+    const q = await d.quoteLadder({ market: "USD/TRY", side: "short", mint: "USDC", rungs: [{ month: 1, tenorDays: 30, amount: 1000 }] });
+    expect(await d.preflight(q)).toEqual({ ok: false, reason: "need-sol" });
+    await d.requestSol();
+    expect((await d.preflight(q)).ok).toBe(false);
+    await d.faucet("USDC");
+    expect(await d.preflight(q)).toEqual({ ok: true });
+  });
+});

@@ -19,6 +19,8 @@ export interface CheckInProps {
   /** answer a step; the parent decides where to go next */
   onAnswer: (patch: Partial<Answers>) => void;
   onGoto: (step: number) => void;
+  /** Enter inside a numeric step */
+  onSubmit: () => void;
   /** values shown in the numeric fields before the user commits them */
   incomeDraft: number;
   setIncomeDraft: (n: number) => void;
@@ -78,6 +80,7 @@ export function CheckIn(p: CheckInProps) {
                   />
                 )}
                 {p.step === 2 && (
+                  <form onSubmit={(e) => { e.preventDefault(); p.onSubmit(); }}>
                   <NumberField
                     label="Monthly amount (USD)"
                     prefix="$"
@@ -88,8 +91,10 @@ export function CheckIn(p: CheckInProps) {
                     error={Number.isFinite(p.incomeDraft) && p.incomeDraft >= 10 && p.incomeDraft <= 1_000_000 ? null : "Enter between $10 and $1,000,000 a month."}
                     hint={p.incomeSource}
                   />
+                  </form>
                 )}
                 {p.step === 3 && (
+                  <form onSubmit={(e) => { e.preventDefault(); p.onSubmit(); }}>
                   <NumberField
                     label="Lira a month (TRY)"
                     prefix="₺"
@@ -100,6 +105,7 @@ export function CheckIn(p: CheckInProps) {
                     error={Number.isFinite(p.needDraft) && p.needDraft > 0 ? null : "Enter the lira you need a month."}
                     hint={copy.needHint}
                   />
+                  </form>
                 )}
                 {p.step === 4 && (
                   <Cards

@@ -10,7 +10,7 @@ import { Panel } from "@/components/Panel";
 const HEADS = ["Spot", "Fwd 30D", "Fwd 90D", "Fwd 180D", "Carry", "Best offer"];
 
 export function MarketsBoard() {
-  const markets = useParityQuery((d) => d.getMarkets(), [], 15_000);
+  const markets = useParityQuery((d) => d.getMarkets(), [], 15_000, (d) => d.peek?.markets());
   const health = useParityQuery((d) => d.getFeedHealth(), [], 15_000);
   const demo = useParityQuery((d) => d.getDemo());
   const list = markets.value ?? [];

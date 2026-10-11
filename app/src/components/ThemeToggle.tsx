@@ -12,7 +12,7 @@ const OPTIONS: { value: Theme; label: string }[] = [
 export function ThemeToggle({ className }: { className?: string }) {
   const { theme, setTheme } = useTheme();
   return (
-    <div role="radiogroup" aria-label="Theme" className={cx("theme-toggle inline-flex rounded-[4px] border-[1.5px] border-navy p-0.5", className)}>
+    <div role="radiogroup" aria-label="Theme" className={cx("theme-toggle rounded-[4px] border-[1.5px] border-navy p-0.5", className)}>
       {OPTIONS.map((o) => {
         const on = theme === o.value;
         return (

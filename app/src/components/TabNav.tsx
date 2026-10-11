@@ -44,7 +44,7 @@ export function TopTabs() {
 export function BottomTabs() {
   const path = usePathname();
   return (
-    <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-40 border-t-2 border-navy bg-navy pb-[env(safe-area-inset-bottom)] md:hidden">
+    <nav aria-label="Main" className="bottom-tabs fixed inset-x-0 bottom-0 z-40 border-t-2 border-navy bg-navy pb-[env(safe-area-inset-bottom)] md:hidden">
       <ul className="grid grid-cols-4">
         {TABS.map((t) => {
           const on = path.startsWith(t.href);

@@ -52,9 +52,10 @@ export function AdvisorDesk() {
   const [fullOverride, setFullOverride] = useState(false);
   const [excluded, setExcluded] = useState<number[]>([]);
   const [lock, setLock] = useState<LockState>({ kind: "idle" });
+  const [nudge, setNudge] = useState<number | null>(null);
 
-  const markets = useParityQuery((d) => d.getMarkets(), [], 30_000);
-  const rates = useParityQuery((d) => d.getRates());
+  const markets = useParityQuery((d) => d.getMarkets(), [], 30_000, (d) => d.peek?.markets());
+  const rates = useParityQuery((d) => d.getRates(), [], undefined, (d) => d.peek?.rates());
   const wallet = useParityQuery((d) => d.getWallet());
 
   const persona = personaById(answers.profile);
@@ -70,6 +71,9 @@ export function AdvisorDesk() {
     complete && inputs && quote && rates.value && inputs.monthlyUsd >= 10
       ? advise({ quote, rates: rates.value, direction: pair.direction, monthlyUsd: inputs.monthlyUsd, months: inputs.months, risk: inputs.risk, override: fullOverride ? 1 : null })
       : null;
+  const advisedH = fullOverride && inputs && quote && rates.value && inputs.monthlyUsd >= 10
+    ? advise({ quote, rates: rates.value, direction: pair.direction, monthlyUsd: inputs.monthlyUsd, months: inputs.months, risk: inputs.risk }).h
+    : advice?.h ?? 1;
   const planned: PlannedRung[] = advice && inputs ? netLocked(advice.rungs, lockedQ.value ?? {}, inputs.monthlyUsd) : [];
   const toQuote = planned.filter((r) => r.amount > 0 && !excluded.includes(r.month));
 
@@ -86,6 +90,8 @@ export function AdvisorDesk() {
   const lqLock = lockReq ? (lockQuoteQ.value ?? null) : null;
   const pfQ = useParityQuery((d) => (lqLock ? d.preflight(lqLock) : Promise.resolve(null)), [JSON.stringify(lqLock)]);
   const pf = lqLock ? (pfQ.value ?? null) : null;
+  const noSeatMonths = lq?.rungs.filter((r) => !r.offerId).map((r) => r.month) ?? [];
+  const whyRungs = planned.filter((r) => !excluded.includes(r.month) && !noSeatMonths.includes(r.month));
 
   /* ---- check-in navigation ---- */
   const reset = () => { setLock({ kind: "idle" }); setExcluded([]); };
@@ -113,13 +119,15 @@ export function AdvisorDesk() {
   const incomeOk = Number.isFinite(incomeValue) && incomeValue >= 10 && incomeValue <= 1_000_000;
   const needOk = Number.isFinite(needValue) && needValue > 0;
 
+  const stepAnswered =
+    step === 1 ? !!answers.profile : step === 2 ? incomeOk : step === 3 ? needOk : step === 4 ? !!answers.months : step === 5 ? !!answers.feel : true;
   const onNext = () => {
+    if (!stepAnswered) { setNudge(step); return; }
+    setNudge(null);
     if (step === 2) { if (incomeOk) answer({ incomeUsd: incomeValue }); return; }
     if (step === 3) { if (needOk) answer({ needTry: needValue }); return; }
     answer({});
   };
-  const stepAnswered =
-    step === 1 ? !!answers.profile : step === 2 ? incomeOk : step === 3 ? needOk : step === 4 ? !!answers.months : step === 5 ? !!answers.feel : true;
 
   const onLock = async () => {
     if (!lockReq || !lqLock) return;
@@ -143,10 +151,11 @@ export function AdvisorDesk() {
       advice={advice}
       planned={planned}
       sentence={summarySentence({ persona: inputs.persona.id, incomeUsd: inputs.incomeUsd, needTry: answers.needTry!, lockedQuote: lockedQuoteTotal, quoteCcy: m.quote })}
-      why={advice ? whySentence({ rungs: planned.filter((r) => !excluded.includes(r.month)), nowSec: now, direction: pair.direction, forwardAboveExpected: advice.forward >= advice.expected, market: pair.market }) : "Enter at least $10 a month to size a ladder."}
+      why={lock.kind === "done" ? `Locked ${lock.positions.length} coupon${lock.positions.length > 1 ? "s" : ""} in one signature. Edit any answer to plan the next ones; what you hold now is netted out.` : advice ? whySentence({ rungs: whyRungs, nowSec: now, direction: pair.direction, forwardAboveExpected: advice.forward >= advice.expected, market: pair.market, override: fullOverride }) : "Enter at least $10 a month to size a ladder."}
       onEdit={goto}
       onPair={(i) => { setAnswers({ ...answers, pairIdx: i }); setFullOverride(false); reset(); }}
       fullOverride={fullOverride}
+      advisedH={advisedH}
       onOverride={(v) => { setFullOverride(v); reset(); }}
     />
   ) : null;
@@ -155,14 +164,16 @@ export function AdvisorDesk() {
     <div className="sheet -mx-4 -my-6 grid-cols-1 md:-mx-8 md:-my-8 lg:grid-cols-12">
       <h1 className="sr-only">Advisor — booking desk</h1>
       {/* LEFT — check-in + the one action */}
-      <section aria-label="Check-in" className="flex min-w-0 flex-col px-4 py-5 md:px-6 lg:col-span-4">
+      <section aria-label="Check-in" className="min-w-0 px-4 py-5 md:px-6 lg:col-span-4">
+        <div className="lg:sticky lg:top-4">
         <h2 className="panel-title t-label text-lg text-navy">Check-in</h2>
-        <div className="mt-3 flex-1">
+        <div className="mt-3">
           <CheckIn
             answers={answers}
             step={step}
-            onAnswer={(patch) => answer(patch, 140)}
+            onAnswer={(patch) => { setNudge(null); answer(patch, 140); }}
             onGoto={goto}
+            onSubmit={() => onNext()}
             incomeDraft={incomeValue}
             setIncomeDraft={(n) => setIncomeDraft(n)}
             incomeSource={incomeSource}
@@ -175,6 +186,7 @@ export function AdvisorDesk() {
           step={step}
           complete={complete}
           stepAnswered={stepAnswered}
+          nudge={nudge === step ? ({ 1: "Pick the card that fits you best.", 4: "Pick how far ahead you know.", 5: "Pick how a 10% move would feel." } as Record<number, string>)[step] ?? null : null}
           onNext={onNext}
           onBack={() => setStep((s) => Math.max(1, s - 1))}
           lqLock={lqLock}
@@ -185,6 +197,7 @@ export function AdvisorDesk() {
           mint={mint}
           quote={quote}
         />
+        </div>
       </section>
 
       {/* CENTRE — the coupon book */}
@@ -259,10 +272,10 @@ export function AdvisorDesk() {
 /* ---------------------------------------------------------------- */
 
 function Summary({
-  answers, inputs, advice, planned, sentence, why, onEdit, onPair, fullOverride, onOverride,
+  answers, inputs, advice, planned, sentence, why, onEdit, onPair, fullOverride, advisedH, onOverride,
 }: {
   answers: Answers; inputs: NonNullable<ReturnType<typeof checkInToLadderInputs>>; advice: Advice | null; planned: PlannedRung[];
-  sentence: string; why: string; onEdit: (s: number) => void; onPair: (i: number) => void; fullOverride: boolean; onOverride: (v: boolean) => void;
+  sentence: string; why: string; onEdit: (s: number) => void; onPair: (i: number) => void; fullOverride: boolean; advisedH: number; onOverride: (v: boolean) => void;
 }) {
   const chips: { step: number; label: string }[] = [
     { step: 1, label: PROFILE_OPTIONS.find((o) => o.value === answers.profile)!.label },
@@ -302,7 +315,7 @@ function Summary({
       ) : null}
       {advice && (advice.h < 0.995 || fullOverride) ? (
         <Button variant="ghost" onClick={() => onOverride(!fullOverride)}>
-          {fullOverride ? `Back to the advised ${Math.round((advice.h) * 100)}%` : "Lock 100% instead"}
+          {fullOverride ? `Back to the advised ${Math.round(advisedH * 100)}%` : "Lock 100% instead"}
         </Button>
       ) : null}
     </div>
@@ -312,9 +325,9 @@ function Summary({
 /* ---------------------------------------------------------------- */
 
 function ActionBar({
-  step, complete, stepAnswered, onNext, onBack, lqLock, hasRungs, preflight, lock, onLock, mint, quote,
+  step, complete, stepAnswered, nudge, onNext, onBack, lqLock, hasRungs, preflight, lock, onLock, mint, quote,
 }: {
-  step: number; complete: boolean; stepAnswered: boolean; onNext: () => void; onBack: () => void;
+  step: number; complete: boolean; stepAnswered: boolean; nudge: string | null; onNext: () => void; onBack: () => void;
   lqLock: LadderQuote | null; hasRungs: boolean; preflight: Preflight | null; lock: LockState; onLock: () => void; mint: Mint; quote?: MarketQuote;
 }) {
   const { data } = useParity();
@@ -330,11 +343,15 @@ function ActionBar({
 
   if (!complete) {
     button = (
-      <Button id="next-step" variant="primary" size="lg" block disabled={!stepAnswered} onClick={onNext}>
+      <Button id="next-step" variant="primary" size="lg" block aria-disabled={!stepAnswered || undefined} error={nudge} onClick={onNext}>
         {step >= STEP_COUNT ? "Issue my coupons" : "Next"}
       </Button>
     );
-    notice = <p className="text-xs text-navy-2">One question per step. Pick a card or press Enter; you can edit any answer later.</p>;
+    notice = (
+      <p className="text-xs text-navy-2">
+        {step === 2 || step === 3 ? "Type a round number and press Enter." : "Pick a card — it moves you on."} Every answer can be edited later.
+      </p>
+    );
   } else if (lock.kind === "done") {
     button = <Button id="lock-it" variant="primary" size="lg" block success="LOCKED">Lock it</Button>;
     notice = (
@@ -412,7 +429,7 @@ function ActionBar({
   return (
     <div className="mt-5 border-t-2 border-navy pt-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-        <div className="sm:w-[13.5rem] sm:shrink-0">{button}</div>
+        <div className="action-slot sm:w-[15rem] sm:shrink-0 [&_button]:whitespace-nowrap [&_button]:px-3 [&_button]:tracking-[0.04em]">{button}</div>
         <div className="min-w-0 flex-1 sm:pt-0.5" aria-live="polite">{notice}</div>
       </div>
       <div className="mt-2 flex items-center justify-between">

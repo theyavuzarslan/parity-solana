@@ -10,6 +10,7 @@ import { DemoChip } from "@/components/DemoChip";
 import { Num } from "@/components/Num";
 import { Panel } from "@/components/Panel";
 import { StatusChip } from "@/components/StatusChip";
+import { SourceTag } from "@/components/MarketRow";
 
 /** Run a dispatch action with per-button pending state. */
 function useAction() {
@@ -24,7 +25,7 @@ function useAction() {
 export function DispatchSheet() {
   const { data } = useParity();
   const demo = useParityQuery((d) => d.getDemo());
-  const markets = useParityQuery((d) => d.getMarkets());
+  const markets = useParityQuery((d) => d.getMarkets(), [], undefined, (d) => d.peek?.markets());
   const rates = useParityQuery((d) => d.getRates());
   const log = useParityQuery((d) => d.getDispatchLog());
   const { busy, run } = useAction();
@@ -41,7 +42,7 @@ export function DispatchSheet() {
         <Panel title="Demo mode" aside={demoOn ? <DemoChip /> : <span>Off</span>}>
           <div className="flex flex-col gap-4 border-y-2 border-navy bg-coupon px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
             <p className="max-w-prose text-sm text-navy-2">
-              On: demo prices supersede Pyth for every market, markets read OPEN, shocks and clock moves are allowed. Off: Pyth prices only, real market hours.
+              On: demo prices supersede the feed for every market, markets read OPEN, demo coupons No. 0001–0005 appear, shocks and clock moves are allowed. Off (default): real prices — Pyth with an API key, otherwise the ECB daily reference rate — and real market hours.
             </p>
             <button
               type="button"
@@ -77,6 +78,7 @@ export function DispatchSheet() {
                   <div className="flex min-w-0 flex-1 basis-40 items-baseline gap-3">
                     <span className="t-label w-20 text-base text-navy">{m.id}</span>
                     <Num className="text-sm">{q ? fmtPrice(q.spot, m.dp) : "—"}</Num>
+                    {q ? <SourceTag q={q} className="inline" /> : null}
                     {mult !== 1 ? <span className="t-num text-xs text-navy-2">×{fmtNum(mult, 4)}</span> : null}
                   </div>
                   <div className="flex gap-2">
