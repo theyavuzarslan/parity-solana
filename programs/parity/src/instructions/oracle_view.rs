@@ -6,6 +6,7 @@ use crate::{
     state::{effective_now, Config, DemoState, Market},
 };
 
+/// Event form of `crate::oracle::PriceRead`, tagged with the market id.
 #[event]
 pub struct PriceRead {
     pub market_id: u16,

@@ -10,7 +10,7 @@ pub mod oracle;
 pub mod state;
 
 pub use instructions::*;
-use state::{MarketArgs, RiskParams};
+use state::{MarketArgs, RiskParams, Side};
 
 #[program]
 pub mod parity {
@@ -55,5 +55,27 @@ pub mod parity {
     /// Permissionless view: read a market price (demo override or Pyth) and emit `PriceRead`.
     pub fn debug_price(ctx: Context<DebugPrice>, market_id: u16) -> Result<()> {
         instructions::oracle_view::handle_debug_price(ctx, market_id)
+    }
+
+    /// Maker posts an offer and locks IM plus the protocol's spread share on full capacity.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_offer(
+        ctx: Context<CreateOffer>,
+        nonce: u64,
+        market_id: u16,
+        maker_side: Side,
+        spread_bps: u16,
+        min_tenor_days: u16,
+        max_tenor_days: u16,
+        capacity_usd: u64,
+    ) -> Result<()> {
+        instructions::offer::handle_create_offer(
+            ctx, nonce, market_id, maker_side, spread_bps, min_tenor_days, max_tenor_days, capacity_usd,
+        )
+    }
+
+    /// Maker deactivates an offer; its locked margin returns to the maker's canonical ATA.
+    pub fn cancel_offer(ctx: Context<CancelOffer>) -> Result<()> {
+        instructions::offer::handle_cancel_offer(ctx)
     }
 }

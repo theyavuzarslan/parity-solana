@@ -24,6 +24,7 @@ pub const MAX_FUTURE_SKEW_SECS: i64 = 5;
 const VERIFICATION_FULL: u8 = 1;
 
 /// A market price read: legs `a`/`b` and `spot`/`upq` at 1e8 scale.
+/// Emitted (with `market_id`) as the `crate::instructions::oracle_view::PriceRead` event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PriceRead {
     pub a: u64,
@@ -66,7 +67,8 @@ pub fn validate_feed(
     let age = now.checked_sub(publish_time).ok_or_else(|| error!(ParityError::MarketClosedOrStale))?;
     require!(age <= params.max_price_age_secs, ParityError::MarketClosedOrStale);
     require!(age >= -MAX_FUTURE_SKEW_SECS, ParityError::MarketClosedOrStale);
-    // conf / price <= max_conf_bps / 1e4  (price <= 0 fails here unless conf == 0, then normalize rejects)
+    require!(price > 0, ParityError::OracleConfidence);
+    // conf / price <= max_conf_bps / 1e4
     let lhs = conf as i128 * 10_000;
     let rhs = price as i128 * params.max_conf_bps as i128;
     require!(lhs <= rhs, ParityError::OracleConfidence);
@@ -184,7 +186,9 @@ mod tests {
         let wide = ([7; 32], 4_150_000i64, 20_751u64, -5i32, 940i64);
         assert_eq!(code(validate_feed(wide, &[7; 32], &p, 1_000).unwrap_err()), ParityError::OracleConfidence as u32);
         let neg = ([7; 32], -1i64, 0u64, -5i32, 940i64);
-        assert!(validate_feed(neg, &[7; 32], &p, 1_000).is_err());
+        assert_eq!(code(validate_feed(neg, &[7; 32], &p, 1_000).unwrap_err()), ParityError::OracleConfidence as u32);
+        let zero = ([7; 32], 0i64, 0u64, -5i32, 940i64);
+        assert_eq!(code(validate_feed(zero, &[7; 32], &p, 1_000).unwrap_err()), ParityError::OracleConfidence as u32);
         // extreme publish_time does not panic on subtraction
         let ancient = ([7; 32], 1i64, 0u64, -5i32, i64::MIN);
         assert_eq!(code(validate_feed(ancient, &[7; 32], &p, 1_000).unwrap_err()), ParityError::MarketClosedOrStale as u32);
