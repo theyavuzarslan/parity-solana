@@ -1,0 +1,81 @@
+{
+  "source": "fallback",
+  "note": "Approximate placeholder values; Pyth benchmarks tradingview shim returned 404/401 on 2026-10-12. Regenerate with pnpm build-vol.",
+  "vol": {
+    "USD/TRY": {
+      "sigmaAnnual": 0.14,
+      "driftAnnual": 0.3,
+      "asOf": "2026-10-12"
+    },
+    "EUR/TRY": {
+      "sigmaAnnual": 0.15,
+      "driftAnnual": 0.31,
+      "asOf": "2026-10-12"
+    },
+    "GBP/TRY": {
+      "sigmaAnnual": 0.15,
+      "driftAnnual": 0.3,
+      "asOf": "2026-10-12"
+    },
+    "GAU/TRY": {
+      "sigmaAnnual": 0.2,
+      "driftAnnual": 0.55,
+      "asOf": "2026-10-12"
+    },
+    "EUR/USD": {
+      "sigmaAnnual": 0.07,
+      "driftAnnual": 0.01,
+      "asOf": "2026-10-12"
+    },
+    "GBP/USD": {
+      "sigmaAnnual": 0.08,
+      "driftAnnual": 0.0,
+      "asOf": "2026-10-12"
+    },
+    "USD/CHF": {
+      "sigmaAnnual": 0.07,
+      "driftAnnual": -0.02,
+      "asOf": "2026-10-12"
+    },
+    "USD/JPY": {
+      "sigmaAnnual": 0.1,
+      "driftAnnual": 0.0,
+      "asOf": "2026-10-12"
+    },
+    "USD/CNH": {
+      "sigmaAnnual": 0.04,
+      "driftAnnual": 0.0,
+      "asOf": "2026-10-12"
+    },
+    "USD/MXN": {
+      "sigmaAnnual": 0.12,
+      "driftAnnual": 0.0,
+      "asOf": "2026-10-12"
+    },
+    "USD/BRL": {
+      "sigmaAnnual": 0.13,
+      "driftAnnual": 0.0,
+      "asOf": "2026-10-12"
+    },
+    "USD/ZAR": {
+      "sigmaAnnual": 0.14,
+      "driftAnnual": 0.0,
+      "asOf": "2026-10-12"
+    },
+    "USD/INR": {
+      "sigmaAnnual": 0.04,
+      "driftAnnual": 0.02,
+      "asOf": "2026-10-12"
+    },
+    "XAU/USD": {
+      "sigmaAnnual": 0.18,
+      "driftAnnual": 0.25,
+      "asOf": "2026-10-12"
+    },
+    "XAG/USD": {
+      "sigmaAnnual": 0.3,
+      "driftAnnual": 0.25,
+      "asOf": "2026-10-12"
+    }
+  }
+}
