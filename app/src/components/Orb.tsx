@@ -2,7 +2,8 @@
 
 import { ThinkingOrb } from "thinking-orbs";
 import { useReducedMotion } from "motion/react";
-import { ORB_INK_NAVY } from "@/lib/tokens";
+import { ORB_INK_LIGHT, ORB_INK_NAVY } from "@/lib/tokens";
+import { useTheme } from "@/lib/theme";
 
 /**
  * Pending indicator — `thinking-orbs` by Jakub Antalik (MIT,
@@ -11,5 +12,7 @@ import { ORB_INK_NAVY } from "@/lib/tokens";
  */
 export function Orb({ size = 20, label, state = "working" }: { size?: 20 | 32 | 64; label: string; state?: "working" | "connecting" | "searching" }) {
   const reduce = useReducedMotion();
-  return <ThinkingOrb state={state} size={size} theme="light" color={ORB_INK_NAVY} paused={!!reduce} aria-label={label} />;
+  const { theme } = useTheme();
+  const dark = theme === "solana";
+  return <ThinkingOrb state={state} size={size} theme={dark ? "dark" : "light"} color={dark ? ORB_INK_LIGHT : ORB_INK_NAVY} paused={!!reduce} aria-label={label} />;
 }

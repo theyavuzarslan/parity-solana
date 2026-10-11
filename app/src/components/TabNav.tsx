@@ -25,12 +25,12 @@ export function TopTabs() {
                 href={t.href}
                 aria-current={on ? "page" : undefined}
                 className={cx(
-                  "t-label relative flex h-10 items-center rounded-t-[4px] border-2 border-b-0 px-4 text-sm transition-colors duration-150 active:translate-y-px",
+                  "tab-link t-label relative flex h-10 items-center rounded-t-[4px] border-2 border-b-0 px-4 text-sm transition-colors duration-150 active:translate-y-px",
                   on ? "border-navy bg-navy text-coupon" : "border-transparent text-navy hover:border-hairline hover:bg-coupon",
                 )}
               >
                 {t.label}
-                {on ? <span aria-hidden className="absolute -bottom-[5px] left-1/2 size-2.5 -translate-x-1/2 rotate-45 bg-navy" /> : null}
+                {on ? <span aria-hidden className="tab-notch absolute -bottom-[5px] left-1/2 size-2.5 -translate-x-1/2 rotate-45 bg-navy" /> : null}
               </Link>
             </li>
           );
@@ -58,7 +58,7 @@ export function BottomTabs() {
                   on ? "text-coupon" : "text-copy",
                 )}
               >
-                <span aria-hidden className={cx("h-1 w-6 -skew-x-[20deg]", on ? "bg-red" : "bg-transparent")} />
+                <span aria-hidden className={cx("tab-mark h-1 w-6 -skew-x-[20deg]", on ? "bg-red" : "bg-transparent")} />
                 {t.label}
               </Link>
             </li>

@@ -4,7 +4,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { cx } from "@/lib/format";
 import { fade } from "@/lib/motion";
 
-export type StampKind = "LOCKED" | "MARGIN CALL" | "PARTIAL" | "VOID" | "SETTLED" | "ISSUED" | "SENT";
+export type StampKind = "LOCKED" | "MARGIN CALL" | "PARTIAL" | "VOID" | "SETTLED" | "ISSUED" | "SENT" | "NO SEATS";
 
 const INK: Record<StampKind, string> = {
   LOCKED: "border-navy text-navy",
@@ -14,6 +14,7 @@ const INK: Record<StampKind, string> = {
   SETTLED: "border-carbon text-carbon",
   ISSUED: "border-navy text-navy",
   SENT: "border-carbon text-carbon",
+  "NO SEATS": "border-navy text-navy",
 };
 
 /** Rubber stamp: lands with one short scale settle (1.15 → 1), no bounce. */

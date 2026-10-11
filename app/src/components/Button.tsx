@@ -28,7 +28,7 @@ const base =
 
 const variants: Record<Variant, string> = {
   primary:
-    "bg-red text-coupon border-2 border-red hover:bg-red-press hover:border-red-press active:bg-red-press " +
+    "btn-primary bg-red text-coupon border-2 border-red hover:bg-red-press hover:border-red-press active:bg-red-press " +
     "disabled:bg-navy-2/30 disabled:border-transparent disabled:text-navy",
   secondary:
     "bg-coupon text-navy border-2 border-navy hover:bg-navy hover:text-coupon active:bg-navy-2 active:text-coupon " +
@@ -38,6 +38,13 @@ const variants: Record<Variant, string> = {
 };
 
 const sizes = { sm: "h-9 px-3 text-sm", md: "h-11 px-5 text-base", lg: "h-14 px-8 text-lg tracking-[0.08em]" };
+
+/** Link styled as the primary (red) button, for navigation CTAs. */
+export const primaryLinkCls =
+  "btn-primary t-label inline-flex h-14 items-center justify-center rounded-[4px] border-2 border-red bg-red px-8 text-lg tracking-[0.08em] text-coupon transition-[background-color,transform] duration-150 hover:bg-red-press hover:border-red-press active:scale-[0.97]";
+/** Link styled as the secondary (navy outline) button. */
+export const secondaryLinkCls =
+  "btn-secondary t-label inline-flex h-14 items-center justify-center rounded-[4px] border-2 border-navy bg-coupon px-8 text-lg tracking-[0.08em] text-navy transition-[background-color,color,transform] duration-150 hover:bg-navy hover:text-coupon active:scale-[0.97]";
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
   { variant = "secondary", size = "md", loading, loadingLabel = "Signing…", success, error, children, className, block, disabled, id, ...rest },

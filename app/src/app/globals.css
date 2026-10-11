@@ -60,6 +60,10 @@
   --space-8: 32px;
   --space-10: 40px;
   --space-12: 48px;
+  /* ticket skin (theme-swappable) */
+  --ticket-edge: var(--color-navy);
+  --ticket-drop: 4px 4px 0 var(--color-navy);
+  --color-rule-strong: var(--color-navy);
   color-scheme: light;
 }
 
@@ -120,49 +124,158 @@ body {
   outline-offset: 2px;
 }
 
-/* ---------- Coupon ---------- */
+/* ---------- Tickets: coupons and carbon copies ----------
+ * A ticket is a masked face inside a shell. The shell carries the 4px offset
+ * navy shadow as a drop-shadow, so the shadow follows the notches. The face is
+ * masked with two punched notches where the tear line meets the edge, and
+ * (carbon copies) four notched corners. Rings draw the navy arc of each notch.
+ * Wide (≥ 32rem): stub column on the right, vertical tear line, notches top and
+ * bottom. Narrow: stub row at the bottom, horizontal tear, notches left and right.
+ */
+.ticket-shell {
+  container-type: inline-size;
+  min-width: 0;
+  filter: drop-shadow(var(--ticket-drop));
+}
+.ticket-shell[data-flat] { filter: none; }
+.ticket {
+  --stub-w: 9.5rem;
+  --stub-h: 4rem;
+  --nr: 9px;
+  --n1: calc(100% - var(--stub-w)) 0;
+  --n2: calc(100% - var(--stub-w)) 100%;
+  --r1x: calc(100% - var(--stub-w) + 2px);
+  --r1y: -2px;
+  --r2x: calc(100% - var(--stub-w) + 2px);
+  --r2y: calc(100% + 2px);
+  position: relative;
+  background: var(--color-coupon);
+  border: 2px solid var(--ticket-edge);
+  border-radius: var(--radius-coupon);
+  -webkit-mask:
+    radial-gradient(circle at var(--n1), #0000 var(--nr), #000 calc(var(--nr) + 0.5px)),
+    radial-gradient(circle at var(--n2), #0000 var(--nr), #000 calc(var(--nr) + 0.5px));
+  -webkit-mask-composite: source-in;
+  mask:
+    radial-gradient(circle at var(--n1), #0000 var(--nr), #000 calc(var(--nr) + 0.5px)),
+    radial-gradient(circle at var(--n2), #0000 var(--nr), #000 calc(var(--nr) + 0.5px));
+  mask-composite: intersect;
+}
+.ticket[data-blank] {
+  border-style: dashed;
+  background: transparent;
+}
+.ticket-ring {
+  position: absolute;
+  width: calc(2 * var(--nr) + 4px);
+  height: calc(2 * var(--nr) + 4px);
+  border: 2px solid var(--ticket-edge);
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 3;
+}
+.ticket[data-blank] .ticket-ring { border-style: dashed; }
+.ticket-ring[data-n="1"] { left: var(--r1x); top: var(--r1y); }
+.ticket-ring[data-n="2"] { left: var(--r2x); top: var(--r2y); }
+
+.ticket-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) calc(var(--stub-w) - 2px);
+  grid-template-areas: "head tenor" "main stub";
+}
+.ticket-head { grid-area: head; }
+.ticket-tenor { grid-area: tenor; border-left: 1px dashed var(--ticket-edge); }
+.ticket-main { grid-area: main; min-width: 0; }
+.ticket-stub { grid-area: stub; border-left: 1px dashed var(--ticket-edge); }
+
+@container (width < 32rem) {
+  .ticket {
+    --n1: 0 calc(100% - var(--stub-h));
+    --n2: 100% calc(100% - var(--stub-h));
+    --r1x: -2px;
+    --r1y: calc(100% - var(--stub-h) + 2px);
+    --r2x: calc(100% + 2px);
+    --r2y: calc(100% - var(--stub-h) + 2px);
+  }
+  .ticket-grid {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "head tenor" "main main" "stub stub";
+  }
+  .ticket-tenor { border-left: 0; }
+  .ticket-stub { border-left: 0; border-top: 1px dashed var(--ticket-edge); min-height: calc(var(--stub-h) - 2px); }
+}
+
+/* Plain ticket card (no stub), e.g. the landing mechanism card. */
 .coupon {
   position: relative;
   background: var(--color-coupon);
-  border: 2px solid var(--color-navy);
+  border: 2px solid var(--ticket-edge);
   border-radius: var(--radius-coupon);
-  box-shadow: var(--shadow-coupon);
+  box-shadow: var(--ticket-drop);
   overflow: hidden;
-  isolation: isolate;
 }
-/* Punched notches at the tear line: discs of page stock outlined in navy, half hidden by the coupon edge. */
-.coupon-notch {
-  position: absolute;
-  width: 16px;
-  height: 16px;
-  border-radius: 999px;
-  background: var(--color-stock);
-  border: 2px solid var(--color-navy);
-  transform: translateX(-50%);
-  z-index: 3;
-  pointer-events: none;
-}
-.coupon-notch[data-edge="top"] { top: -10px; }
-.coupon-notch[data-edge="bottom"] { bottom: -10px; }
 
-@utility perf-y {
-  border-top-width: 0;
-  border-left: 1px dashed var(--color-navy);
+/* VOID: red hatched edge down the stub (board.png card). */
+.void-edge {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 10px;
+  background: repeating-linear-gradient(135deg, var(--color-red) 0 3px, transparent 3px 7px);
+  border-left: 1.5px solid var(--color-red);
+  border-bottom-right-radius: 8px;
 }
-@utility perf-x {
-  border-left-width: 0;
-  border-top: 1px dashed var(--color-navy);
+
+/* Carbon copy: lilac stub ticket with notched corners and a vertical perforation. */
+.carbon-ticket {
+  --stub-w: 7.5rem;
+  --cr: 8px;
+  position: relative;
+  background: var(--color-copy);
+  color: var(--color-copy-ink);
+  border-radius: 4px;
+  -webkit-mask:
+    radial-gradient(circle at 0 0, #0000 var(--cr), #000 calc(var(--cr) + 0.5px)),
+    radial-gradient(circle at 100% 0, #0000 var(--cr), #000 calc(var(--cr) + 0.5px)),
+    radial-gradient(circle at 0 100%, #0000 var(--cr), #000 calc(var(--cr) + 0.5px)),
+    radial-gradient(circle at 100% 100%, #0000 var(--cr), #000 calc(var(--cr) + 0.5px)),
+    radial-gradient(circle at calc(100% - var(--stub-w)) 0, #0000 var(--cr), #000 calc(var(--cr) + 0.5px));
+  -webkit-mask-composite: source-in;
+  mask:
+    radial-gradient(circle at 0 0, #0000 var(--cr), #000 calc(var(--cr) + 0.5px)),
+    radial-gradient(circle at 100% 0, #0000 var(--cr), #000 calc(var(--cr) + 0.5px)),
+    radial-gradient(circle at 0 100%, #0000 var(--cr), #000 calc(var(--cr) + 0.5px)),
+    radial-gradient(circle at 100% 100%, #0000 var(--cr), #000 calc(var(--cr) + 0.5px)),
+    radial-gradient(circle at calc(100% - var(--stub-w)) 0, #0000 var(--cr), #000 calc(var(--cr) + 0.5px));
+  mask-composite: intersect;
 }
+.carbon-wrap { container-type: inline-size; }
+.carbon-ticket[data-nostub] { --stub-w: 0px; }
+.carbon-total {
+  font-size: clamp(1.75rem, 13cqi, 3rem);
+  letter-spacing: -0.02em;
+}
+.carbon-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--stub-w);
+}
+.carbon-stub { border-left: 1px dashed var(--color-copy-ink); }
+.carbon-tear { border-top: 1px dashed var(--color-copy-ink); }
+
 @utility perf-x-copy {
   border-top: 1px dashed var(--color-copy-ink);
 }
 
-/* ---------- Carbon copy ---------- */
-.carbon-copy {
-  position: relative;
-  background: var(--color-copy);
-  color: var(--color-copy-ink);
-  border-radius: var(--radius-coupon);
+/* ---------- Ruled sheet: 1px navy rules between panels (hero.png) ---------- */
+.sheet {
+  display: grid;
+  gap: 1px;
+  background: var(--color-rule-strong);
+  border-bottom: 1px solid var(--color-rule-strong);
+}
+.sheet > * {
+  background: var(--color-stock);
+  min-width: 0;
 }
 
 /* ---------- Stamp ink texture ---------- */
@@ -206,3 +319,112 @@ input[type="number"] {
     transition: none !important;
   }
 }
+
+/* =====================================================================
+ * Theme B — "Solana-native finance" (DESIGN.md §9). Same components and data;
+ * <html data-theme="solana"> swaps the tokens and a few component skins.
+ * Graphite ground, 1px borders, soft depth, Geist + Geist Mono. The Solana
+ * gradient appears ONLY on the primary button and the active ladder rung —
+ * never on backgrounds, never as a glow. Green/red only for PnL (with sign + word).
+ * ===================================================================== */
+:root[data-theme="solana"] {
+  --color-stock: oklch(15.5% 0.006 275);
+  --color-coupon: oklch(19.5% 0.007 275);
+  --color-navy: oklch(95% 0.004 275);
+  --color-navy-2: oklch(72% 0.012 275);
+  --color-carbon: oklch(92% 0.02 295);
+  --color-copy: oklch(21.5% 0.012 290);
+  --color-copy-ink: oklch(90% 0.02 290);
+  --color-red: oklch(68% 0.17 22);
+  --color-red-press: oklch(62% 0.17 22);
+  --color-ok: oklch(78% 0.15 160);
+  --color-warn: oklch(80% 0.13 80);
+  --color-rule: oklch(100% 0 0 / 0.14);
+  --color-hairline: oklch(100% 0 0 / 0.09);
+  --color-focus: oklch(82% 0.13 180);
+  --color-rule-strong: oklch(100% 0 0 / 0.08);
+  --sol-a: oklch(70% 0.2 300);
+  --sol-b: oklch(84% 0.15 170);
+  --ticket-edge: oklch(100% 0 0 / 0.12);
+  --ticket-drop: 0 10px 24px oklch(0% 0 0 / 0.35);
+  --shadow-coupon: 0 10px 24px oklch(0% 0 0 / 0.35);
+  --font-display: var(--font-geist), system-ui, sans-serif;
+  --font-body: var(--font-geist), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  color-scheme: dark;
+}
+[data-theme="solana"] body { font-size: 0.9375rem; }
+
+/* Type: sentence-case labels, calmer display */
+[data-theme="solana"] .t-display { text-transform: none; font-weight: 600; letter-spacing: -0.025em; }
+[data-theme="solana"] .t-label { text-transform: none; font-weight: 500; letter-spacing: 0; }
+[data-theme="solana"] .t-num { font-weight: 400; }
+[data-theme="solana"] .panel-title::before { content: none; }
+[data-theme="solana"] .panel-title { font-size: 1rem; font-weight: 600; }
+
+/* Thin 1px borders everywhere, faint rules instead of ink */
+[data-theme="solana"] .border-navy { border-color: var(--color-rule); }
+[data-theme="solana"] .border-2 { border-width: 1px; }
+[data-theme="solana"] .border-y-2 { border-block-width: 1px; }
+[data-theme="solana"] .border-t-2 { border-top-width: 1px; }
+[data-theme="solana"] .border-b-2 { border-bottom-width: 1px; }
+[data-theme="solana"] .border-l-2 { border-left-width: 1px; }
+[data-theme="solana"] .border-\[1\.5px\] { border-width: 1px; }
+[data-theme="solana"] .border-\[3px\] { border-width: 1px; }
+
+/* The gradient: primary button only */
+[data-theme="solana"] .btn-primary:not(:disabled) {
+  background-image: linear-gradient(90deg, var(--sol-a), var(--sol-b));
+  border-color: transparent;
+  color: oklch(16% 0.01 275);
+  border-radius: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+}
+[data-theme="solana"] .btn-primary:not(:disabled):hover { background-image: linear-gradient(90deg, oklch(74% 0.19 300), oklch(87% 0.14 170)); }
+[data-theme="solana"] .btn-primary:disabled { background: var(--color-hairline); color: var(--color-navy-2); border-color: transparent; border-radius: 8px; }
+[data-theme="solana"] .btn-secondary,
+[data-theme="solana"] button.bg-coupon { border-radius: 8px; }
+.sol-gradient { background-image: linear-gradient(90deg, var(--sol-a, var(--color-carbon)), var(--sol-b, var(--color-carbon))); }
+
+/* Red is for losses and danger only: neutralise ticket accents */
+[data-theme="solana"] .tenor-tab { background: transparent; color: var(--color-navy-2); }
+[data-theme="solana"] .kicker,
+[data-theme="solana"] .accent-arrow,
+[data-theme="solana"] .route-arrow { color: var(--color-navy-2); }
+[data-theme="solana"] .wordmark-accent { background: var(--color-navy-2); }
+[data-theme="solana"] .tab-notch { display: none; }
+[data-theme="solana"] .tab-mark.bg-red { background: var(--color-navy); }
+[data-theme="solana"] .tab-link[aria-current="page"] { background: var(--color-coupon); color: var(--color-navy); border-color: var(--color-hairline); border-radius: 8px 8px 0 0; }
+[data-theme="solana"] .chip.text-ok { color: var(--color-navy); border-color: var(--color-rule); }
+[data-theme="solana"] .pnl.text-carbon,
+[data-theme="solana"] .pnl-display.text-carbon { color: var(--color-ok); }
+
+/* Surfaces: soft depth, no stamps, no masks */
+[data-theme="solana"] .ticket { border-width: 1px; border-radius: 12px; -webkit-mask: none; mask: none; }
+[data-theme="solana"] .ticket-ring { display: none; }
+[data-theme="solana"] .ticket-stub,
+[data-theme="solana"] .ticket-tenor { border-left-style: solid; border-top-style: solid; }
+[data-theme="solana"] .coupon { border-width: 1px; border-radius: 12px; }
+[data-theme="solana"] .carbon-ticket { -webkit-mask: none; mask: none; border: 1px solid var(--color-hairline); border-radius: 12px; box-shadow: var(--ticket-drop); }
+[data-theme="solana"] .carbon-stub { border-left: 1px solid var(--color-hairline); }
+[data-theme="solana"] .carbon-tear { border-top: 1px solid var(--color-hairline); }
+[data-theme="solana"] .stamp {
+  -webkit-mask-image: none;
+  mask-image: none;
+  transform: none !important;
+  border-width: 1px;
+  border-radius: 999px;
+  font-weight: 500;
+  font-size: 0.75rem;
+  padding: 0.125rem 0.5rem;
+  letter-spacing: 0;
+}
+[data-theme="solana"] .option-card { border-radius: 10px; }
+[data-theme="solana"] .option-card:hover { box-shadow: none; border-color: var(--color-navy-2); }
+[data-theme="solana"] .option-card[aria-pressed="true"] { background: var(--color-coupon); color: var(--color-navy); border-color: var(--color-navy); }
+[data-theme="solana"] .option-card[aria-pressed="true"] .text-copy { color: var(--color-navy-2); }
+[data-theme="solana"] .pos-row { box-shadow: 0 1px 0 oklch(100% 0 0 / 0.03) inset, 0 6px 16px oklch(0% 0 0 / 0.25); }
+[data-theme="solana"] .check-tick.bg-carbon { background: var(--color-navy); }
+[data-theme="solana"] .void-edge { opacity: 0.6; }

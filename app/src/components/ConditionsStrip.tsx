@@ -6,7 +6,7 @@ export const CONDITIONS_TEXT =
 
 export function ConditionsStrip({ demoMode }: { demoMode: boolean }) {
   return (
-    <footer className="border-t-2 border-navy bg-coupon">
+    <footer className="conditions-strip z-30 border-t-2 border-navy bg-coupon md:sticky md:bottom-0">
       <div className="mx-auto flex max-w-[1440px] flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-4 md:px-8">
         {demoMode ? <DemoChip /> : null}
         <p className="text-xs leading-snug text-navy-2 text-pretty">{CONDITIONS_TEXT}</p>

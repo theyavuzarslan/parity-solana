@@ -4,3 +4,4 @@
  * Keep in sync with DESIGN.md §2: --color-navy ≈ #0D1B3D.
  */
 export const ORB_INK_NAVY = "#0D1B3D";
+export const ORB_INK_LIGHT = "#E9EAF0"; // Theme B ink (≈ --color-navy under data-theme="solana")

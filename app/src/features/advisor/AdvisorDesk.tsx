@@ -3,199 +3,307 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useState } from "react";
-import type { Risk } from "advisor";
+import { useState, type ReactNode } from "react";
 import { useParity, useParityQuery } from "@/data/provider";
 import { marketConfig } from "@/data/markets";
 import { usdPerQuote } from "@/data/pricing";
-import type { LadderQuote, LadderRequest, MarketQuote, Mint, Position, Preflight, Rate } from "@/data/types";
+import type { LadderQuote, LadderRequest, MarketQuote, Mint, Position, Preflight, Rate, WalletState } from "@/data/types";
 import { advise, scenarioSeries, type Advice } from "@/lib/advise";
+import {
+  checkInToLadderInputs, EMPTY_ANSWERS, FEELS, firstOpenStep, HORIZONS, monthName, netLocked, PROFILE_OPTIONS,
+  STEP_COUNT, summarySentence, whySentence, type Answers, type PlannedRung,
+} from "@/lib/checkin";
 import { fmtCcy } from "@/lib/currency";
-import { cx, fmtNum, fmtPct, fmtPrice, fmtUsd } from "@/lib/format";
+import { cx, fmtNum, fmtPct, fmtPrice, fmtStamp, fmtUsd } from "@/lib/format";
 import { ISSUE_STAGGER, spring } from "@/lib/motion";
-import { PERSONAS, personaById, sideOf, type PersonaId } from "@/lib/personas";
+import { personaById, sideOf } from "@/lib/personas";
+import { useTheme } from "@/lib/theme";
+import { useNow } from "@/lib/useNow";
 import { Button } from "@/components/Button";
 import { CarbonCopy, CopyLine } from "@/components/CarbonCopy";
-import { Coupon } from "@/components/Coupon";
-import { NumberField } from "@/components/Field";
+import { BlankCoupon, Coupon } from "@/components/Coupon";
+import { PositionRow, RowAxis } from "@/components/PositionRow";
+import { SourceTag } from "@/components/MarketRow";
 import { Num } from "@/components/Num";
-import { Orb } from "@/components/Orb";
 import { Panel } from "@/components/Panel";
 import { ScenarioChart } from "@/components/ScenarioChart";
-import { Segmented } from "@/components/Segmented";
 import { StatusChip } from "@/components/StatusChip";
 import { FAUCET_AMOUNT } from "@/data/mockProvider";
+import { CheckIn, PairSwitch } from "./CheckIn";
 
-const RISKS: { value: Risk; label: string; hint: string }[] = [
-  { value: "conservative", label: "Cautious", hint: "Weights risk most (γ = 20)" },
-  { value: "balanced", label: "Balanced", hint: "γ = 6" },
-  { value: "opportunistic", label: "Opportunistic", hint: "Weights cost most (γ = 2)" },
-];
+type LockState =
+  | { kind: "idle" }
+  | { kind: "signing" }
+  | { kind: "done"; positions: Position[]; lq: LadderQuote }
+  | { kind: "error"; message: string };
 
-type LockState = { kind: "idle" } | { kind: "signing" } | { kind: "done"; positions: Position[] } | { kind: "error"; message: string };
 
 export function AdvisorDesk() {
   const params = useSearchParams();
   const { data } = useParity();
-  const [personaId, setPersonaId] = useState<PersonaId>(personaById(params.get("persona")).id);
-  const persona = personaById(personaId);
-  const [pairIdx, setPairIdx] = useState(0);
-  const pair = persona.pairs[Math.min(pairIdx, persona.pairs.length - 1)];
-  const [monthly, setMonthly] = useState<number>(persona.defaultMonthlyUsd);
-  const [months, setMonths] = useState(3);
-  const [risk, setRisk] = useState<Risk>("balanced");
+  const now = useNow();
+  const fromUrl = params.get("persona");
+  const [answers, setAnswers] = useState<Answers>({ ...EMPTY_ANSWERS, profile: fromUrl ? personaById(fromUrl).id : null });
+  const [step, setStep] = useState(1);
+  const [returnToSummary, setReturnToSummary] = useState(false);
+  const [incomeDraft, setIncomeDraft] = useState<number | null>(null);
+  const [needDraft, setNeedDraft] = useState<number | null>(null);
   const [mint, setMint] = useState<Mint>("USDC");
   const [fullOverride, setFullOverride] = useState(false);
+  const [excluded, setExcluded] = useState<number[]>([]);
   const [lock, setLock] = useState<LockState>({ kind: "idle" });
 
   const markets = useParityQuery((d) => d.getMarkets(), [], 30_000);
   const rates = useParityQuery((d) => d.getRates());
+  const wallet = useParityQuery((d) => d.getWallet());
+
+  const persona = personaById(answers.profile);
+  const usdtry = markets.value?.find((m) => m.id === "USD/TRY");
+  const inputs = usdtry ? checkInToLadderInputs(answers, { usdTry: usdtry.spot }) : null;
+  const pair = inputs?.pair ?? persona.pairs[Math.min(answers.pairIdx, persona.pairs.length - 1)];
+  const side = sideOf(pair.direction);
   const quote = markets.value?.find((m) => m.id === pair.market);
+  const lockedQ = useParityQuery((d) => d.lockedByMonth(pair.market, side), [pair.market, side]);
+  const complete = step > STEP_COUNT && !!inputs;
 
-  const monthlyOk = Number.isFinite(monthly) && monthly >= 10 && monthly <= 1_000_000;
   const advice =
-    quote && rates.value && monthlyOk
-      ? advise({ quote, rates: rates.value, direction: pair.direction, monthlyUsd: monthly, months, risk, override: fullOverride ? 1 : null })
+    complete && inputs && quote && rates.value && inputs.monthlyUsd >= 10
+      ? advise({ quote, rates: rates.value, direction: pair.direction, monthlyUsd: inputs.monthlyUsd, months: inputs.months, risk: inputs.risk, override: fullOverride ? 1 : null })
       : null;
+  const planned: PlannedRung[] = advice && inputs ? netLocked(advice.rungs, lockedQ.value ?? {}, inputs.monthlyUsd) : [];
+  const toQuote = planned.filter((r) => r.amount > 0 && !excluded.includes(r.month));
 
-  const req: LadderRequest | null = advice
-    ? { market: pair.market, side: sideOf(pair.direction), mint, rungs: advice.rungs.map((r) => ({ month: r.month, tenorDays: r.tenorDays, amount: r.amount })) }
+  const req: LadderRequest | null = toQuote.length
+    ? { market: pair.market, side, mint, rungs: toQuote.map((r) => ({ month: r.month, tenorDays: r.tenorDays, amount: r.amount })) }
     : null;
-  const reqKey = JSON.stringify(req);
-  const ladder = useParityQuery((d) => (req && req.rungs.length ? d.quoteLadder(req) : Promise.resolve(null)), [reqKey]);
-  const lq = ladder.value ?? null;
-  const pf = useParityQuery((d) => (lq ? d.preflight(lq) : Promise.resolve(null)), [JSON.stringify(lq)]);
+  const ladder = useParityQuery((d) => (req ? d.quoteLadder(req) : Promise.resolve(null)), [JSON.stringify(req)]);
+  const lq = req ? (ladder.value ?? null) : null;
+  const seated = lq?.rungs.filter((r) => r.offerId) ?? [];
+  const lockReq: LadderRequest | null = lq && seated.length
+    ? { market: lq.market, side: lq.side, mint: lq.mint, rungs: seated.map((r) => ({ month: r.month, tenorDays: r.tenorDays, amount: r.amount })) }
+    : null;
+  const lockQuoteQ = useParityQuery((d) => (lockReq ? d.quoteLadder(lockReq) : Promise.resolve(null)), [JSON.stringify(lockReq)]);
+  const lqLock = lockReq ? (lockQuoteQ.value ?? null) : null;
+  const pfQ = useParityQuery((d) => (lqLock ? d.preflight(lqLock) : Promise.resolve(null)), [JSON.stringify(lqLock)]);
+  const pf = lqLock ? (pfQ.value ?? null) : null;
 
-  const reset = () => setLock({ kind: "idle" });
-  const choosePersona = (id: PersonaId) => {
-    setPersonaId(id);
-    setPairIdx(0);
-    setMonthly(personaById(id).defaultMonthlyUsd);
-    setFullOverride(false);
+  /* ---- check-in navigation ---- */
+  const reset = () => { setLock({ kind: "idle" }); setExcluded([]); };
+  const answer = (patch: Partial<Answers>, delayMs = 0) => {
+    const next = { ...answers, ...patch };
+    setAnswers(next);
     reset();
+    const go = () => {
+      const open = firstOpenStep(next);
+      if (returnToSummary && open > STEP_COUNT) { setStep(STEP_COUNT + 1); setReturnToSummary(false); return; }
+      setStep((s) => (s >= STEP_COUNT ? (open > STEP_COUNT ? STEP_COUNT + 1 : open) : s + 1));
+    };
+    if (delayMs) setTimeout(go, delayMs); else go();
   };
+  const goto = (s: number) => { setReturnToSummary(step > STEP_COUNT || returnToSummary); setStep(s); };
+
+  const walletPrefill = wallet.value?.connected && wallet.value.balances.USDC + wallet.value.balances.USDG > 0
+    ? Math.round(wallet.value.balances.USDC + wallet.value.balances.USDG)
+    : null;
+  const incomeValue = incomeDraft ?? answers.incomeUsd ?? walletPrefill ?? persona.defaultMonthlyUsd;
+  const incomeSource = walletPrefill && answers.incomeUsd === null && incomeDraft === null
+    ? `Pre-filled from your connected wallet: ${fmtNum(walletPrefill, 0)} test USDC/USDG. Edit it if your month differs.`
+    : `Suggested for this profile — edit it to match yours.`;
+  const needValue = needDraft ?? answers.needTry ?? persona.defaultNeedTry;
+  const incomeOk = Number.isFinite(incomeValue) && incomeValue >= 10 && incomeValue <= 1_000_000;
+  const needOk = Number.isFinite(needValue) && needValue > 0;
+
+  const onNext = () => {
+    if (step === 2) { if (incomeOk) answer({ incomeUsd: incomeValue }); return; }
+    if (step === 3) { if (needOk) answer({ needTry: needValue }); return; }
+    answer({});
+  };
+  const stepAnswered =
+    step === 1 ? !!answers.profile : step === 2 ? incomeOk : step === 3 ? needOk : step === 4 ? !!answers.months : step === 5 ? !!answers.feel : true;
 
   const onLock = async () => {
-    if (!req) return;
+    if (!lockReq || !lqLock) return;
     setLock({ kind: "signing" });
     try {
-      const res = await data.lockLadder(req);
-      setLock({ kind: "done", positions: res.positions });
+      const res = await data.lockLadder(lockReq);
+      setLock({ kind: "done", positions: res.positions, lq: lqLock });
     } catch (e) {
       setLock({ kind: "error", message: e instanceof Error ? e.message : "The transaction failed." });
     }
   };
 
-  const locked = lock.kind === "done";
+  const lockedUsdTotal = Object.values(lockedQ.value ?? {}).reduce((a, b) => a + b, 0);
+  const m = marketConfig(pair.market);
+  const lockedQuoteTotal = quote ? lockedUsdTotal / usdPerQuote(pair.market, quote.spot) : 0;
+
+  const summary = complete && inputs ? (
+    <Summary
+      answers={answers}
+      inputs={inputs}
+      advice={advice}
+      planned={planned}
+      sentence={summarySentence({ persona: inputs.persona.id, incomeUsd: inputs.incomeUsd, needTry: answers.needTry!, lockedQuote: lockedQuoteTotal, quoteCcy: m.quote })}
+      why={advice ? whySentence({ rungs: planned.filter((r) => !excluded.includes(r.month)), nowSec: now, direction: pair.direction, forwardAboveExpected: advice.forward >= advice.expected, market: pair.market }) : "Enter at least $10 a month to size a ladder."}
+      onEdit={goto}
+      onPair={(i) => { setAnswers({ ...answers, pairIdx: i }); setFullOverride(false); reset(); }}
+      fullOverride={fullOverride}
+      onOverride={(v) => { setFullOverride(v); reset(); }}
+    />
+  ) : null;
 
   return (
-    <div className="grid grid-cols-1 gap-x-8 gap-y-10 lg:grid-cols-12">
-      {/* LEFT — booking desk inputs */}
-      <section aria-labelledby="desk-t" className="min-w-0 lg:col-span-4 xl:col-span-3">
-        <h1 id="desk-t" className="t-display text-3xl text-navy">Booking desk</h1>
-        <p className="mt-1.5 max-w-prose text-sm text-navy-2">Tell the Advisor what you earn or owe; it sizes a ladder you lock in one signature.</p>
-
-        <div className="mt-5 space-y-4">
-          <Segmented
-            label="Who is hedging"
-            size="sm"
-            value={personaId}
-            onChange={choosePersona}
-            options={PERSONAS.map((p) => ({ value: p.id, label: p.tab }))}
-          />
-          <p className="text-sm text-navy-2">
-            <span className="t-label mr-1.5 text-navy">{persona.title}.</span>
-            {persona.proposed ? <span className="t-label mr-1.5 rounded-[3px] border-[1.5px] border-warn px-1.5 py-px text-xs text-navy">PROPOSED</span> : null}
-            {persona.blurb}
-          </p>
-
-          {persona.pairs.length > 1 ? (
-            <Segmented
-              label="Pair"
-              size="sm"
-              value={String(pairIdx)}
-              onChange={(v) => { setPairIdx(Number(v)); setFullOverride(false); reset(); }}
-              options={persona.pairs.map((p, i) => ({ value: String(i), label: p.label }))}
-            />
-          ) : (
-            <div className="flex items-baseline justify-between gap-3 border-y border-hairline py-2">
-              <span className="t-label text-xs text-navy">Pair</span>
-              <span className="t-label text-base text-navy">{pair.label}</span>
-            </div>
-          )}
-
-          <NumberField
-            label="Monthly amount (USD)"
-            prefix="$"
-            value={monthly}
-            min={10}
-            step={100}
-            onChange={(n) => { setMonthly(n); reset(); }}
-            error={monthlyOk ? null : "Enter between $10 and $1,000,000 a month."}
-            hint={pair.plain}
-          />
-
-          <Segmented
-            label="Months ahead"
-            size="sm"
-            value={String(months)}
-            onChange={(v) => { setMonths(Number(v)); reset(); }}
-            options={[1, 2, 3, 4, 5, 6].map((n) => ({ value: String(n), label: String(n) }))}
-          />
-
-          <Segmented label="Risk preference" value={risk} onChange={(v) => { setRisk(v); reset(); }} size="sm" options={RISKS} />
-
-          <LockBlock
-            lq={lq}
-            preflight={pf.value ?? null}
-            lock={lock}
-            advice={advice}
-            fullOverride={fullOverride}
-            onOverride={(v) => { setFullOverride(v); reset(); }}
-            onLock={onLock}
-            mint={mint}
+    <div className="sheet -mx-4 -my-6 grid-cols-1 md:-mx-8 md:-my-8 lg:grid-cols-12">
+      <h1 className="sr-only">Advisor — booking desk</h1>
+      {/* LEFT — check-in + the one action */}
+      <section aria-label="Check-in" className="flex min-w-0 flex-col px-4 py-5 md:px-6 lg:col-span-4">
+        <h2 className="panel-title t-label text-lg text-navy">Check-in</h2>
+        <div className="mt-3 flex-1">
+          <CheckIn
+            answers={answers}
+            step={step}
+            onAnswer={(patch) => answer(patch, 140)}
+            onGoto={goto}
+            incomeDraft={incomeValue}
+            setIncomeDraft={(n) => setIncomeDraft(n)}
+            incomeSource={incomeSource}
+            needDraft={needValue}
+            setNeedDraft={(n) => setNeedDraft(n)}
+            summary={summary}
           />
         </div>
+        <ActionBar
+          step={step}
+          complete={complete}
+          stepAnswered={stepAnswered}
+          onNext={onNext}
+          onBack={() => setStep((s) => Math.max(1, s - 1))}
+          lqLock={lqLock}
+          hasRungs={toQuote.length > 0}
+          preflight={pf}
+          lock={lock}
+          onLock={onLock}
+          mint={mint}
+          quote={quote}
+        />
       </section>
 
-      {/* CENTRE — the ladder as coupons */}
-      <section aria-labelledby="ladder-t" className="min-w-0 lg:col-span-8 xl:col-span-6">
+      {/* CENTRE — the coupon book */}
+      <section aria-labelledby="ladder-t" className="min-w-0 px-4 py-5 md:px-6 lg:col-span-8 xl:col-span-5">
         <Panel
           id="ladder"
-          title={locked ? "Your next settlements" : "Your coupon book"}
-          aside={advice ? <span>h* = <span className="t-num text-carbon">{Math.round(advice.h * 100)}%</span> · {pair.market}</span> : null}
+          title={lock.kind === "done" ? "Your next settlements" : "Your coupon book"}
+          aside={advice ? <span>h* = <span className="t-num text-carbon">{Math.round(advice.h * 100)}%</span> · {pair.market}</span> : <span>{pair.market}</span>}
         >
-          {!advice || !quote ? (
-            <div className="flex h-64 items-center justify-center gap-3 rounded-[10px] border-2 border-dashed border-hairline">
-              <Orb label="Loading prices" size={32} state="connecting" />
-              <span className="t-label text-sm text-navy-2">Fetching spot and rates…</span>
+          {!complete ? (
+            <div className="space-y-4">
+              <BlankCoupon index={1} label="Prints after check-in" />
+              <p className="text-sm text-navy-2">Answer five short questions; the Advisor then issues one coupon per month, sized to what you need.</p>
             </div>
-          ) : advice.rungs.length === 0 ? (
-            <div className="rounded-[10px] border-2 border-dashed border-navy/40 px-5 py-8">
-              <p className="t-display text-2xl text-navy">Nothing to lock at this ratio</p>
-              <p className="mt-2 max-w-prose text-navy-2">{advice.why}</p>
+          ) : lock.kind === "done" ? (
+            <LockedBook lock={lock} />
+          ) : !advice || !lq || lq.rungs.length === 0 ? (
+            <div className="ticket-shell" data-flat="">
+              <div className="ticket px-5 py-6" data-blank="">
+                <p className="t-display text-2xl text-navy">Nothing to lock</p>
+                <p className="mt-2 max-w-prose text-navy-2">{summary ? (advice ? whySentence({ rungs: planned, nowSec: now, direction: pair.direction, forwardAboveExpected: advice.forward >= advice.expected, market: pair.market }) : "Enter at least $10 a month.") : null}</p>
+              </div>
             </div>
           ) : (
-            <Ladder lq={lq} lock={lock} />
+            <Book
+              lq={lq}
+              planned={planned}
+              onTry90={() => { setAnswers({ ...answers, months: 3 }); reset(); }}
+              onSkip={(month) => { setExcluded((x) => [...x, month]); setLock({ kind: "idle" }); }}
+            />
           )}
         </Panel>
       </section>
 
       {/* RIGHT — carbon-copy receipt */}
-      <aside className="min-w-0 lg:col-span-12 xl:col-span-3">
-        <Receipt lq={lq} quote={quote} mint={mint} setMint={(m) => { setMint(m); reset(); }} />
+      <aside className="min-w-0 px-4 py-5 md:px-6 lg:col-span-12 xl:col-span-3">
+        <Receipt
+          complete={complete}
+          lq={lock.kind === "done" ? lock.lq : lqLock}
+          quote={quote}
+          mint={mint}
+          setMint={(x) => { setMint(x); setLock({ kind: "idle" }); }}
+          preflight={pf}
+          wallet={wallet.value}
+          firstNo={lock.kind === "done" ? lock.positions[0]?.no : undefined}
+        />
       </aside>
 
       {/* BELOW — the mechanism */}
       {advice && quote && rates.value ? (
         <>
-          <section className="min-w-0 border-t-2 border-navy pt-8 lg:col-span-5">
+          <section className="min-w-0 px-4 py-6 md:px-6 lg:col-span-5">
             <Mechanism advice={advice} quote={quote} rates={rates.value} />
           </section>
-          <section className="min-w-0 border-t-2 border-navy pt-8 lg:col-span-7">
-            <Scenarios advice={advice} quote={quote} lq={lq} monthly={monthly} months={months} />
+          <section className="min-w-0 px-4 py-6 md:px-6 lg:col-span-7">
+            <Scenarios advice={advice} quote={quote} lq={lqLock} monthly={inputs!.monthlyUsd} months={inputs!.months} />
           </section>
         </>
+      ) : (
+        <section className="min-w-0 px-4 py-6 md:px-6 lg:col-span-12">
+          <Panel title="Why this ratio">
+            <p className="max-w-prose text-sm text-navy-2">
+              After check-in this panel shows the arithmetic: spot, the forward from the rate gap F = S × (1 + r<sub>quote</sub>·t) / (1 + r<sub>base</sub>·t), the expected spot from recent drift, the volatility used, and the hedge ratio h* with one sentence on why.
+            </p>
+          </Panel>
+        </section>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- */
+
+function Summary({
+  answers, inputs, advice, planned, sentence, why, onEdit, onPair, fullOverride, onOverride,
+}: {
+  answers: Answers; inputs: NonNullable<ReturnType<typeof checkInToLadderInputs>>; advice: Advice | null; planned: PlannedRung[];
+  sentence: string; why: string; onEdit: (s: number) => void; onPair: (i: number) => void; fullOverride: boolean; onOverride: (v: boolean) => void;
+}) {
+  const chips: { step: number; label: string }[] = [
+    { step: 1, label: PROFILE_OPTIONS.find((o) => o.value === answers.profile)!.label },
+    { step: 2, label: `$${fmtNum(answers.incomeUsd!, 0)}/mo` },
+    { step: 3, label: `₺${fmtNum(answers.needTry!, 0)}/mo` },
+    { step: 4, label: HORIZONS.find((h) => h.value === answers.months)!.label },
+    { step: 5, label: FEELS.find((f) => f.value === answers.feel)!.label },
+  ];
+  const netted = planned.filter((r) => r.lockedUsd > 0);
+  return (
+    <div className="space-y-3">
+      <p className="text-base text-navy">{sentence}</p>
+      <ul className="flex flex-wrap gap-1.5" aria-label="Your answers — select one to edit it">
+        {chips.map((c) => (
+          <li key={c.step}>
+            <button
+              type="button"
+              onClick={() => onEdit(c.step)}
+              className="t-label inline-flex h-7 items-center gap-1.5 rounded-[3px] border-[1.5px] border-navy bg-coupon px-2 text-xs text-navy transition-[background-color,color,transform] duration-150 hover:bg-navy hover:text-coupon active:scale-[0.97]"
+            >
+              {c.label}
+              <span aria-hidden className="text-navy-2">✎</span>
+              <span className="sr-only">— edit</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <PairSwitch profile={answers.profile!} pairIdx={answers.pairIdx} onChange={onPair} />
+      <p className="border-l-2 border-navy pl-3 text-sm text-navy">{why}</p>
+      {inputs.capped ? (
+        <p className="text-xs text-navy-2">Capped at your lira need: about {fmtUsd(inputs.needUsd, 0)} a month, not the full {fmtUsd(inputs.incomeUsd, 0)}.</p>
+      ) : null}
+      {netted.length ? (
+        <p className="text-xs text-navy-2">
+          Netted out what you already hold: {netted.map((r) => `${fmtUsd(r.lockedUsd, 0)} in month ${r.month}`).join(", ")}.
+        </p>
+      ) : null}
+      {advice && (advice.h < 0.995 || fullOverride) ? (
+        <Button variant="ghost" onClick={() => onOverride(!fullOverride)}>
+          {fullOverride ? `Back to the advised ${Math.round((advice.h) * 100)}%` : "Lock 100% instead"}
+        </Button>
       ) : null}
     </div>
   );
@@ -203,16 +311,153 @@ export function AdvisorDesk() {
 
 /* ---------------------------------------------------------------- */
 
-function Ladder({ lq, lock }: { lq: LadderQuote | null; lock: LockState }) {
+function ActionBar({
+  step, complete, stepAnswered, onNext, onBack, lqLock, hasRungs, preflight, lock, onLock, mint, quote,
+}: {
+  step: number; complete: boolean; stepAnswered: boolean; onNext: () => void; onBack: () => void;
+  lqLock: LadderQuote | null; hasRungs: boolean; preflight: Preflight | null; lock: LockState; onLock: () => void; mint: Mint; quote?: MarketQuote;
+}) {
+  const { data } = useParity();
+  const [busy, setBusy] = useState<null | "connect" | "sol" | "faucet">(null);
+  const [err, setErr] = useState<string | null>(null);
+  const run = async (k: "connect" | "sol" | "faucet", fn: () => Promise<unknown>) => {
+    setErr(null); setBusy(k);
+    try { await fn(); } catch (e) { setErr(e instanceof Error ? e.message : "That did not go through — try again."); } finally { setBusy(null); }
+  };
+
+  let button: ReactNode;
+  let notice: ReactNode = null;
+
+  if (!complete) {
+    button = (
+      <Button id="next-step" variant="primary" size="lg" block disabled={!stepAnswered} onClick={onNext}>
+        {step >= STEP_COUNT ? "Issue my coupons" : "Next"}
+      </Button>
+    );
+    notice = <p className="text-xs text-navy-2">One question per step. Pick a card or press Enter; you can edit any answer later.</p>;
+  } else if (lock.kind === "done") {
+    button = <Button id="lock-it" variant="primary" size="lg" block success="LOCKED">Lock it</Button>;
+    notice = (
+      <p className="text-sm text-navy">
+        {lock.positions.length} coupon{lock.positions.length > 1 ? "s" : ""} in your wallet.{" "}
+        <Link href="/wallet" className="t-label underline decoration-1 underline-offset-4 hover:decoration-2">Open wallet →</Link>
+      </p>
+    );
+  } else if (!hasRungs || (!lqLock && !preflight)) {
+    button = <Button id="lock-it" variant="primary" size="lg" block disabled>Lock it</Button>;
+    notice = <p className="text-xs text-navy-2">{hasRungs ? "No maker is quoting any of these months right now." : "Nothing new to lock for these answers."}</p>;
+  } else if (preflight && !preflight.ok && preflight.reason === "no-wallet") {
+    button = (
+      <Button id="lock-it" variant="primary" size="lg" block loading={busy === "connect"} loadingLabel="Connecting…" error={err} onClick={() => run("connect", () => data.connect())}>
+        Connect wallet
+      </Button>
+    );
+    notice = <Notice title="Connect a wallet to lock">Step 1 of 3. The demo wallet is simulated; no extension needed.</Notice>;
+  } else if (preflight && !preflight.ok && preflight.reason === "need-sol") {
+    button = (
+      <Button id="lock-it" variant="primary" size="lg" block loading={busy === "sol"} loadingLabel="Requesting…" error={err} onClick={() => run("sol", () => data.requestSol())}>
+        Get test SOL
+      </Button>
+    );
+    notice = <Notice title="Fees need test SOL">Step 2 of 3. A devnet airdrop with no value pays the signature fee.</Notice>;
+  } else if (preflight && !preflight.ok && preflight.reason === "need-tokens") {
+    button = (
+      <Button id="lock-it" variant="primary" size="lg" block loading={busy === "faucet"} loadingLabel="Requesting…" error={err} onClick={() => run("faucet", () => data.faucet(mint))}>
+        Get {fmtNum(FAUCET_AMOUNT, 0)} test {mint}
+      </Button>
+    );
+    notice = (
+      <Notice title={`This ladder needs ${fmtUsd(preflight.requiredUsd)} test ${mint}`}>
+        Step 3 of 3. Margin plus fee; you hold <span className="t-num text-carbon">{fmtUsd(preflight.balanceUsd)}</span>.
+      </Notice>
+    );
+  } else if (preflight && !preflight.ok && preflight.reason === "market-closed") {
+    button = <Button id="lock-it" variant="primary" size="lg" block disabled>Lock it</Button>;
+    notice = (
+      <Notice title="Prices are paused — rates can't be locked on a stale price">
+        {quote ? (
+          <span className="block text-navy-2/80">
+            Last {quote.id} <span className="t-num opacity-60">{fmtPrice(quote.spot, marketConfig(quote.id).dp)}</span> at <span className="t-num">{fmtStamp(quote.publishTime)}</span>.
+            {quote.status === "CLOSED" ? " FX reopens Sunday 22:00 UTC." : ""}
+          </span>
+        ) : null}
+      </Notice>
+    );
+  } else if (preflight && !preflight.ok && preflight.reason === "no-offer") {
+    button = <Button id="lock-it" variant="primary" size="lg" block disabled>Lock it</Button>;
+    notice = <Notice title="No maker offer covers this ladder">Try a shorter horizon.</Notice>;
+  } else {
+    button = (
+      <Button
+        id="lock-it"
+        variant="primary"
+        size="lg"
+        block
+        disabled={!lqLock || !preflight?.ok}
+        loading={lock.kind === "signing"}
+        loadingLabel="Signing…"
+        error={lock.kind === "error" ? lock.message : null}
+        onClick={onLock}
+      >
+        Lock it
+      </Button>
+    );
+    notice = lqLock ? (
+      <p className="text-xs text-navy-2">
+        One signature, {lqLock.rungs.length} forward{lqLock.rungs.length > 1 ? "s" : ""}, {fmtUsd(lqLock.requiredUsd)} test {lqLock.mint} posted. Mock signing — nothing is sent to devnet yet.
+      </p>
+    ) : null;
+  }
+
+  return (
+    <div className="mt-5 border-t-2 border-navy pt-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+        <div className="sm:w-[13.5rem] sm:shrink-0">{button}</div>
+        <div className="min-w-0 flex-1 sm:pt-0.5" aria-live="polite">{notice}</div>
+      </div>
+      <div className="mt-2 flex items-center justify-between">
+        {step > 1 && lock.kind !== "done" ? <Button variant="ghost" onClick={onBack}>← Back</Button> : <span />}
+        <span className="text-xs text-navy-2">Hedge calculator, not financial advice.</span>
+      </div>
+    </div>
+  );
+}
+
+function Notice({ title, children }: { title: string; children?: ReactNode }) {
+  return (
+    <div role="status" className="space-y-0.5 text-sm text-navy-2">
+      <p className="t-label text-sm text-navy">{title}</p>
+      {children ? <div className="text-xs leading-snug">{children}</div> : null}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- */
+
+function Book({ lq, planned, onTry90, onSkip }: { lq: LadderQuote; planned: PlannedRung[]; onTry90: () => void; onSkip: (month: number) => void }) {
   const reduce = useReducedMotion();
-  if (!lq) return null;
-  const locked = lock.kind === "done" ? lock.positions : null;
+  const { theme } = useTheme();
+  const t0 = useNow();
+  const axisDays = Math.max(...lq.rungs.map((r) => r.tenorDays), 30);
+  const firstSeated = lq.rungs.findIndex((r) => r.offerId);
   return (
     <>
-      <ol className="space-y-4">
+      {theme === "solana" ? <RowAxis days={axisDays} /> : null}
+      <ol className={theme === "solana" ? "space-y-2" : "space-y-4"}>
         <AnimatePresence initial={true} mode="popLayout">
           {lq.rungs.map((r, i) => {
-            const pos = locked?.[i];
+            const noSeat = !r.offerId;
+            const plannedRung = planned.find((p) => p.month === r.month);
+            const common = {
+              index: i + 1, market: lq.market, side: lq.side, tenorDays: r.tenorDays, strike: r.strike, notionalUsd: r.notionalUsd,
+              lockedAmount: r.lockedQuote, maturity: r.maturity, mint: lq.mint, status: noSeat ? ("NO SEATS" as const) : null,
+              tag: noSeat ? "NO MAKER" : "QUOTE · NOT LOCKED",
+            };
+            const extra = noSeat ? (
+              <NoSeats market={lq.market} tenorDays={r.tenorDays} onTry90={r.tenorDays > 90 ? onTry90 : undefined} onSkip={() => onSkip(r.month)} />
+            ) : plannedRung && plannedRung.lockedUsd > 0 ? (
+              <p className="text-xs text-navy-2">{fmtUsd(plannedRung.lockedUsd, 0)} of {monthName(t0, r.tenorDays)} is already locked; this coupon covers the rest.</p>
+            ) : null;
             return (
               <motion.li
                 key={`${lq.market}-${lq.side}-${r.month}`}
@@ -222,187 +467,125 @@ function Ladder({ lq, lock }: { lq: LadderQuote | null; lock: LockState }) {
                 exit={{ opacity: 0 }}
                 transition={reduce ? { duration: 0.15 } : { ...spring, delay: i * ISSUE_STAGGER }}
               >
-                <Coupon
-                  index={i + 1}
-                  market={lq.market}
-                  side={lq.side}
-                  tenorDays={r.tenorDays}
-                  strike={r.strike}
-                  notionalUsd={r.notionalUsd}
-                  lockedAmount={r.lockedQuote}
-                  maturity={r.maturity}
-                  mint={lq.mint}
-                  no={pos?.no}
-                  status={pos ? "LOCKED" : null}
-                  tag={pos ? "MOCK TX · DEMO" : "QUOTE · NOT LOCKED"}
-                  compact
-                />
+                {theme === "solana" ? (
+                  <PositionRow {...common} axisDays={axisDays} openedAt={t0} active={i === firstSeated}>{extra}</PositionRow>
+                ) : (
+                  <Coupon {...common} compact>{extra}</Coupon>
+                )}
               </motion.li>
             );
           })}
         </AnimatePresence>
       </ol>
-      {locked ? (
-        <p className="mt-5 flex flex-wrap items-center gap-3 text-navy">
-          <span>{locked.length} coupons are in your wallet.</span>
-          <Link href="/wallet" className="t-label rounded-[4px] border-2 border-navy px-3 py-1.5 text-sm transition-colors duration-150 hover:bg-navy hover:text-coupon active:scale-[0.97]">
-            Open wallet →
-          </Link>
-        </p>
-      ) : (
-        <p className="mt-4 text-sm text-navy-2">Each rung is one forward against the best demo maker offer. They lock together or not at all.</p>
-      )}
+      <p className="mt-4 text-sm text-navy-2">Each coupon is one forward against the best demo maker offer. Seated coupons lock together in one signature.</p>
+    </>
+  );
+}
+
+function NoSeats({ market, tenorDays, onTry90, onSkip }: { market: string; tenorDays: number; onTry90?: () => void; onSkip: () => void }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-sm text-navy">No maker is quoting {market} for {tenorDays} days right now.</p>
+      <div className="flex flex-wrap gap-2">
+        {onTry90 ? <Button size="sm" variant="secondary" onClick={onTry90}>Try 90 days</Button> : null}
+        <Button size="sm" variant="secondary" onClick={onSkip}>Lock the rest without this month</Button>
+      </div>
+    </div>
+  );
+}
+
+function LockedBook({ lock }: { lock: Extract<LockState, { kind: "done" }> }) {
+  const { theme } = useTheme();
+  const t0 = useNow();
+  const axisDays = Math.max(...lock.positions.map((p) => p.tenorDays), 30);
+  return (
+    <>
+      {theme === "solana" ? <RowAxis days={axisDays} /> : null}
+      <ol className={theme === "solana" ? "space-y-2" : "space-y-4"}>
+        {lock.positions.map((p, i) => {
+          const common = {
+            index: i + 1, market: p.market, side: p.side, tenorDays: p.tenorDays, strike: p.strike, notionalUsd: p.notionalUsd,
+            lockedAmount: p.quantity * p.strike, maturity: p.maturity, mint: p.mint, no: p.no, status: "LOCKED" as const, tag: "MOCK TX · DEMO",
+          };
+          return (
+            <li key={p.id}>
+              {theme === "solana" ? <PositionRow {...common} axisDays={axisDays} openedAt={t0} /> : <Coupon {...common} compact />}
+            </li>
+          );
+        })}
+      </ol>
     </>
   );
 }
 
 /* ---------------------------------------------------------------- */
 
-function LockBlock({
-  lq, preflight, lock, advice, fullOverride, onOverride, onLock, mint,
+function Receipt({
+  complete, lq, quote, mint, setMint, preflight, wallet, firstNo,
 }: {
-  lq: LadderQuote | null; preflight: Preflight | null; lock: LockState; advice: Advice | null;
-  fullOverride: boolean; onOverride: (v: boolean) => void; onLock: () => void; mint: Mint;
+  complete: boolean; lq: LadderQuote | null; quote?: MarketQuote; mint: Mint; setMint: (m: Mint) => void;
+  preflight: Preflight | null; wallet?: WalletState; firstNo?: string;
 }) {
-  const { data } = useParity();
-  const [faucetState, setFaucetState] = useState<"idle" | "busy" | "done" | "error">("idle");
-  const [connecting, setConnecting] = useState(false);
-  const advisedBelowFull = advice && !fullOverride && advice.h < 0.995;
-
-  const notice = (() => {
-    if (!preflight || preflight.ok) return null;
-    switch (preflight.reason) {
-      case "no-wallet":
-        return (
-          <Notice title="Connect a wallet to lock">
-            <p>The demo wallet is simulated; no extension needed.</p>
-            <Button size="sm" variant="secondary" loading={connecting} loadingLabel="Connecting…" onClick={async () => { setConnecting(true); await data.connect(); setConnecting(false); }}>
-              Connect demo wallet
-            </Button>
-          </Notice>
-        );
-      case "need-tokens":
-        return (
-          <Notice title={`This ladder needs ${fmtUsd(preflight.requiredUsd)} test ${mint}`}>
-            <p>Margin plus fee. You hold <span className="t-num text-carbon">{fmtUsd(preflight.balanceUsd)}</span>. The devnet faucet sends test tokens with no value.</p>
-            <Button
-              size="sm"
-              variant="secondary"
-              loading={faucetState === "busy"}
-              loadingLabel="Requesting…"
-              success={faucetState === "done" ? "SENT" : null}
-              error={faucetState === "error" ? "Faucet failed — try again." : null}
-              onClick={async () => {
-                setFaucetState("busy");
-                try { await data.faucet(mint); setFaucetState("done"); } catch { setFaucetState("error"); }
-              }}
-            >
-              Get {fmtNum(FAUCET_AMOUNT, 0)} test {mint}
-            </Button>
-          </Notice>
-        );
-      case "market-closed":
-        return (
-          <Notice title={preflight.status === "STALE" ? "No live price — locking paused" : "Market closed — FX reopens Sunday 22:00 UTC"}>
-            <p>{preflight.status === "STALE" ? "The price feed is unreachable, so nothing can be opened on a stale number." : "The last price is older than 120 seconds. Positions are not opened or marked on stale prices."} Demo mode in Dispatch lets you rehearse.</p>
-          </Notice>
-        );
-      case "no-offer":
-        return <Notice title="No maker offer covers this ladder">Try a smaller amount or a shorter horizon.</Notice>;
-    }
-  })();
-
-  return (
-    <div className="space-y-3 border-t-2 border-navy pt-4">
-      {advisedBelowFull ? (
-        <Segmented
-          label="Hedge ratio"
-          size="sm"
-          value={fullOverride ? "full" : "advised"}
-          onChange={(v) => onOverride(v === "full")}
-          options={[{ value: "advised", label: `Advised ${Math.round(advice.h * 100)}%` }, { value: "full", label: "Lock 100%" }]}
-        />
-      ) : fullOverride ? (
-        <Button variant="ghost" onClick={() => onOverride(false)}>Back to the advised ratio</Button>
-      ) : null}
-      <AnimatePresence initial={false}>
-        {notice ? (
-          <motion.div key="notice" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
-            {notice}
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-      <Button
-        id="lock-it"
-        variant="primary"
-        size="lg"
-        block
-        disabled={!lq || !preflight?.ok || lock.kind === "done"}
-        loading={lock.kind === "signing"}
-        loadingLabel="Signing…"
-        success={lock.kind === "done" ? "LOCKED" : null}
-        error={lock.kind === "error" ? lock.message : null}
-        onClick={onLock}
-      >
-        Lock it
-      </Button>
-      <p className="text-xs text-navy-2">
-        {lq ? <>One transaction, {lq.rungs.length} forward{lq.rungs.length > 1 ? "s" : ""}. </> : null}
-        Hedge calculator, not financial advice. Mock signing — nothing is sent to devnet yet.
-      </p>
-    </div>
-  );
-}
-
-function Notice({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div role="status" className="space-y-1.5 rounded-[4px] border-2 border-navy bg-coupon px-3 py-2.5 text-sm text-navy-2">
-      <p className="t-label text-sm text-navy">{title}</p>
-      {children}
-    </div>
-  );
-}
-
-/* ---------------------------------------------------------------- */
-
-function Receipt({ lq, quote, mint, setMint }: { lq: LadderQuote | null; quote?: MarketQuote; mint: Mint; setMint: (m: Mint) => void }) {
   const m = quote ? marketConfig(quote.id) : null;
   const notional = lq?.rungs.reduce((a, r) => a + r.notionalUsd, 0) ?? 0;
   const lockedQuote = lq?.rungs.reduce((a, r) => a + r.lockedQuote, 0) ?? 0;
   const spreadUsd = lq?.rungs.reduce((a, r) => a + (r.notionalUsd * r.spreadBps) / 10_000, 0) ?? 0;
   const avgSpread = notional > 0 ? (spreadUsd / notional) * 10_000 : 0;
   const avgStrike = lq && notional > 0 ? lq.rungs.reduce((a, r) => a + r.strike * r.notionalUsd, 0) / notional : 0;
-  return (
-    <CarbonCopy title="Hedge receipt" aside={quote ? <StatusChip status={quote.status} /> : undefined}>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <span className="t-label text-xs text-copy-ink">Margin in</span>
-        <div role="radiogroup" aria-label="Collateral mint" className="flex gap-1">
-          {(["USDC", "USDG"] as const).map((x) => (
-            <button
-              key={x}
-              type="button"
-              role="radio"
-              aria-checked={mint === x}
-              onClick={() => setMint(x)}
-              className={cx(
-                "t-label h-8 rounded-t-[4px] border-2 border-b-0 px-3 text-xs transition-colors duration-150 active:scale-[0.97]",
-                mint === x ? "border-copy-ink bg-copy-ink text-copy" : "border-copy-ink/40 text-copy-ink hover:border-copy-ink",
-              )}
-            >
-              Test {x}
-            </button>
-          ))}
-        </div>
-      </div>
-      {lq && m && quote ? (
-        <>
-          <div className="flex flex-wrap items-end justify-between gap-2 border-y border-copy-ink/30 py-3">
-            <div>
-              <span className="t-label block text-xs">{lq.side === "short" ? `You lock in (${m.quote})` : `You will pay (${m.quote})`}</span>
-              <Num tone="copy" className="text-[2.5rem] font-semibold leading-none">{fmtCcy(lockedQuote, m.quote, m.quote === "USD" ? 2 : 0)}</Num>
-            </div>
-            <span className="t-num text-sm">{lq.rungs.length} coupon{lq.rungs.length > 1 ? "s" : ""}</span>
+  const checklist = complete && lq && preflight && !preflight.ok && (preflight.reason === "no-wallet" || preflight.reason === "need-sol" || preflight.reason === "need-tokens");
+
+  const stub = (
+    <>
+      <div>
+        <dt className="t-label text-xs text-copy-ink">Margin in</dt>
+        <dd>
+          <div role="radiogroup" aria-label="Collateral mint" className="mt-1 flex flex-col gap-1">
+            {(["USDC", "USDG"] as const).map((x) => (
+              <button
+                key={x}
+                type="button"
+                role="radio"
+                aria-checked={mint === x}
+                onClick={() => setMint(x)}
+                className={cx(
+                  "t-label h-7 rounded-[3px] border-[1.5px] px-2 text-left text-xs transition-colors duration-150 active:scale-[0.97]",
+                  mint === x ? "border-copy-ink bg-copy-ink text-copy" : "border-copy-ink/40 text-copy-ink hover:border-copy-ink",
+                )}
+              >
+                Test {x}
+              </button>
+            ))}
           </div>
+        </dd>
+      </div>
+      <div>
+        <dt className="t-label text-xs text-copy-ink">Coupons</dt>
+        <dd className="t-num text-lg font-semibold text-copy-ink">{lq ? lq.rungs.length : "—"}</dd>
+      </div>
+      {quote ? (
+        <div>
+          <dt className="sr-only">Price status</dt>
+          <dd><StatusChip status={quote.status} /></dd>
+        </div>
+      ) : null}
+    </>
+  );
+
+  const totalLabel = m && lq ? (lq.side === "short" ? `You lock in (${m.quote})` : `You will pay (${m.quote})`) : "Locked total";
+  return (
+    <CarbonCopy
+      title="Hedge receipt"
+      aside={quote ? <span>{quote.id}</span> : undefined}
+      no={firstNo ?? "—"}
+      stub={stub}
+      total={{ label: totalLabel, value: lq && m ? fmtCcy(lockedQuote, m.quote, m.quote === "USD" ? 2 : 0) : "—", testId: "receipt-total" }}
+    >
+      {!complete || !lq || !m || !quote ? (
+        <p className="py-2 text-sm text-copy-ink">The receipt fills in when the Advisor issues your coupons.</p>
+      ) : checklist ? (
+        <Checklist wallet={wallet} mint={mint} requiredUsd={lq.requiredUsd} />
+      ) : (
+        <>
           <dl className="mt-1">
             <CopyLine label="Notional" value={fmtUsd(notional)} />
             <CopyLine label="Average strike" value={fmtPrice(avgStrike, m.dp)} />
@@ -417,14 +600,49 @@ function Receipt({ lq, quote, mint, setMint }: { lq: LadderQuote | null; quote?:
               <li>Cash-settled in test {lq.mint} at maturity against the spot fixing; no lira changes hands.</li>
               <li>Margin call below 50% of initial margin. Below 20% on three fresh marks, 30% of the position is closed.</li>
               <li>Overnight gaps can skip the liquidation line; losses then follow the waterfall: loser margin → insurance fund → winner haircut.</li>
-              <li>Offers come from demo makers. Prices: {quote.source === "pyth" ? "Pyth" : quote.source === "demo-override" ? "demo override (Dispatch)" : "static demo spots"}.</li>
+              <li>
+                Offers come from demo makers. Prices: {quote.source === "pyth" ? "Pyth" : quote.source === "demo-override" ? "demo override (Dispatch)" : quote.source === "ecb-ref" ? "ECB reference rate (daily) — not a live feed" : "demo"}.
+              </li>
             </ul>
           </div>
         </>
-      ) : (
-        <p className="py-6 text-sm">The receipt fills in as soon as the Advisor has a ladder.</p>
       )}
     </CarbonCopy>
+  );
+}
+
+/** Not connected / no tokens: the receipt becomes a three-step checklist; the current step is highlighted. */
+export function Checklist({ wallet, mint, requiredUsd }: { wallet?: WalletState; mint: Mint; requiredUsd: number }) {
+  const connected = !!wallet?.connected;
+  const sol = wallet?.solBalance ?? 0;
+  const bal = wallet?.balances[mint] ?? 0;
+  const steps = [
+    { label: "Connect wallet", sub: "Demo wallet, no extension", done: connected },
+    { label: "Get test SOL", sub: "Pays devnet fees, no value", done: connected && sol > 0 },
+    { label: `Get test ${mint}`, sub: `Margin + fee ${fmtUsd(requiredUsd)}; you hold ${fmtUsd(bal)}`, done: connected && bal >= requiredUsd },
+  ];
+  const current = steps.findIndex((s) => !s.done);
+  return (
+    <ol className="space-y-1.5" aria-label="Before you can lock">
+      {steps.map((s, i) => {
+        const on = i === current;
+        return (
+          <li
+            key={s.label}
+            aria-current={on ? "step" : undefined}
+            className={cx("flex items-start gap-3 rounded-[3px] border-[1.5px] px-2.5 py-2", on ? "border-copy-ink bg-copy-ink text-copy" : "border-copy-ink/25 text-copy-ink")}
+          >
+            <span className={cx("t-num mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-[2px] border-[1.5px] text-sm", on ? "border-copy" : "border-copy-ink/60")}>
+              {s.done ? "✓" : i + 1}
+            </span>
+            <span className="min-w-0">
+              <span className={cx("t-label block text-sm", s.done && "line-through decoration-1")}>{s.label}</span>
+              <span className="block text-xs leading-snug">{s.done ? "Done" : s.sub}</span>
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -435,14 +653,14 @@ function Mechanism({ advice, quote, rates }: { advice: Advice; quote: MarketQuot
   const rq = rates.find((r) => r.code === m.quote)!;
   const rb = rates.find((r) => r.code === m.baseRate)!;
   const dp = m.dp;
-  const rows: { k: string; v: string; note?: string }[] = [
-    { k: "Spot today", v: fmtPrice(advice.spot, dp), note: quote.source === "pyth" ? "Pyth" : quote.source === "demo-override" ? "Demo override" : "Static demo spot" },
+  const rows: { k: string; v: string; note?: ReactNode }[] = [
+    { k: "Spot today", v: fmtPrice(advice.spot, dp), note: <SourceTag q={quote} className="normal-case" /> },
     { k: `Forward, ${advice.horizonDays} days`, v: fmtPrice(advice.forward, dp), note: "From the rate gap, not a dealer quote" },
-    { k: "Rate gap (carry)", v: `${fmtPct(advice.rateGapPct, 2, true)} a year`, note: `${fmtPct(advice.carryPct, 2, true)} over ${advice.horizonDays} days` },
+    { k: "Rate gap (carry)", v: `${fmtPct(advice.rateGapPct, 2, true)} a year`, note: `${fmtPct(advice.carryPct, 2, true)} over ${advice.horizonDays} days · demo rates` },
     { k: "Expected spot", v: fmtPrice(advice.expected, dp), note: `Spot × recent drift ${fmtPct(advice.driftPct, 1, true)} a year` },
   ];
   return (
-    <Panel title="Why this ratio" aside={<span>Rates: {rq.source}</span>}>
+    <Panel title="Why this ratio" aside={<span>Rates: demo, to be verified</span>}>
       <p className="t-num rounded-[4px] border border-hairline bg-coupon px-3 py-2 text-sm text-navy">
         F = S × (1 + r<sub>{m.quote}</sub>·t) / (1 + r<sub>{m.baseRate}</sub>·t) ={" "}
         <span className="text-carbon">{fmtPrice(advice.spot, dp)} × (1 + {fmtNum(rq.ratePct, 2)}%·{advice.horizonDays}/{rq.basis}) / (1 + {fmtNum(rb.ratePct, 2)}%·{advice.horizonDays}/{rb.basis})</span>

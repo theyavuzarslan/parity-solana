@@ -5,7 +5,6 @@ import { useParityQuery } from "@/data/provider";
 import type { MarketQuote } from "@/data/types";
 import { fmtAge } from "@/lib/format";
 import { MarketLine, MarketRow } from "@/components/MarketRow";
-import { Orb } from "@/components/Orb";
 import { Panel } from "@/components/Panel";
 
 const HEADS = ["Spot", "Fwd 30D", "Fwd 90D", "Fwd 180D", "Carry", "Best offer"];
@@ -16,13 +15,14 @@ export function MarketsBoard() {
   const demo = useParityQuery((d) => d.getDemo());
   const list = markets.value ?? [];
   const open = list.filter((m) => m.status === "OPEN").length;
+  const ref = list.filter((m) => m.status === "REF").length;
   const groups = GROUP_ORDER.map((g) => ({ g, rows: list.filter((m) => m.group === g) })).filter((x) => x.rows.length);
 
   const feedLine = demo.value?.demoMode
-    ? "Demo mode is on: demo prices supersede Pyth, every market shows OPEN."
+    ? "Demo mode is on: demo prices supersede the feed, every market shows OPEN."
     : health.value?.live
       ? `Live from Pyth Hermes · checked ${health.value.checkedAt ? fmtAge(health.value.checkedAt) : "just now"}.`
-      : (health.value?.note ?? "Checking the live feed…");
+      : (health.value?.note ?? "ECB reference rate (daily) — not a live feed.");
 
   return (
     <div>
@@ -34,17 +34,14 @@ export function MarketsBoard() {
           </p>
         </div>
         <div className="text-right">
-          <span className="t-label block text-xs text-navy-2">Open now</span>
-          <span className="t-num text-2xl text-carbon">{list.length ? `${open} / ${list.length}` : "—"}</span>
+          <span className="t-label block text-xs text-navy-2">{ref && !open ? "On reference rates" : "Open now"}</span>
+          <span className="t-num text-2xl text-carbon">{list.length ? `${ref && !open ? ref : open} / ${list.length}` : "—"}</span>
         </div>
       </div>
       <p className="mt-4 border-y border-hairline py-2 text-sm text-navy-2" role="status">{feedLine}</p>
 
-      {markets.loading && !list.length ? (
-        <div className="flex h-48 items-center justify-center gap-3">
-          <Orb label="Loading prices" size={32} state="connecting" />
-          <span className="t-label text-sm text-navy-2">Fetching prices…</span>
-        </div>
+      {!list.length ? (
+        <div className="mt-8 h-48 border-y-2 border-navy" aria-hidden />
       ) : (
         <div className="mt-8 space-y-10">
           {groups.map(({ g, rows }) => (
@@ -55,7 +52,7 @@ export function MarketsBoard() {
         </div>
       )}
       <p className="mt-8 text-xs text-navy-2">
-        CLOSED: the last Pyth price is older than 120 seconds (FX closes at weekends; it reopens Sunday 22:00 UTC). STALE: no live feed reachable, a static demo spot is shown. Best offer = tightest demo maker spread.
+        REF: priced off the ECB reference rate (daily) — a daily reference, not a live feed; USD/CNH uses CNY as a proxy. CLOSED: the last Pyth price is older than 120 seconds (FX closes at weekends; it reopens Sunday 22:00 UTC). STALE: no feed for this market — gold and silver show round demo prices unless a Pyth key is set. Rates are demo values, to be verified. Best offer = tightest demo maker spread.
       </p>
     </div>
   );

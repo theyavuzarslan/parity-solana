@@ -1,9 +1,9 @@
 import type { Waterfall } from "@/data/types";
 import { fmtUsd } from "@/lib/format";
-import { CarbonCopy, CopyLine } from "./CarbonCopy";
+import { CarbonCopy, CopyLine, StubField } from "./CarbonCopy";
 
 /** Loss waterfall: loser margin → insurance fund → pro-rata winner haircut. */
-export function WaterfallView({ w, mint = "USDG" }: { w: Waterfall; mint?: string }) {
+export function WaterfallView({ w, mint = "USDG", no }: { w: Waterfall; mint?: string; no?: string }) {
   const steps = [
     { key: "margin", label: "1 · Loser margin", sub: "Posted margin taken first", v: w.loserMarginUsd },
     { key: "insurance", label: "2 · Insurance fund", sub: `Same-mint fund (${mint}) covers the next part`, v: w.insuranceUsd },
@@ -11,7 +11,13 @@ export function WaterfallView({ w, mint = "USDG" }: { w: Waterfall; mint?: strin
   ] as const;
   const total = Math.max(w.owedUsd, 0.0001);
   return (
-    <CarbonCopy title="Loss waterfall" aside="CARBON COPY">
+    <CarbonCopy
+      title="Loss waterfall"
+      aside="Carbon copy"
+      no={no ?? "—"}
+      stub={<StubField label="Mint">{mint}</StubField>}
+      total={{ label: "Owed at close", value: fmtUsd(w.owedUsd), testId: "wf-owed" }}
+    >
       <p className="text-sm text-copy-ink">The gap jumped past the liquidation line, so the loss was paid in this order:</p>
       <div className="mt-3 flex h-3 w-full overflow-hidden rounded-[2px] border border-copy-ink" aria-hidden>
         {steps.map((s, i) => (
@@ -31,7 +37,6 @@ export function WaterfallView({ w, mint = "USDG" }: { w: Waterfall; mint?: strin
             testId={`wf-${s.key}`}
           />
         ))}
-        <CopyLine strong label="Owed at close" value={fmtUsd(w.owedUsd)} testId="wf-owed" />
       </dl>
     </CarbonCopy>
   );
