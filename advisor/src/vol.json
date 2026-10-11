@@ -1,0 +1,96 @@
+{
+  "source": "frankfurter-ecb",
+  "note": "FX from Frankfurter (ECB reference rates), ~400d daily log returns, EWMA lambda 0.94. USD/CNH uses CNY as proxy. XAU/USD and XAG/USD are approximate fallbacks (no free keyless source); GAU/TRY combines fallback XAU with real USD/TRY assuming zero correlation.",
+  "vol": {
+    "USD/TRY": {
+      "sigmaAnnual": 0.0157,
+      "driftAnnual": 0.1601,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
+    },
+    "EUR/TRY": {
+      "sigmaAnnual": 0.0552,
+      "driftAnnual": 0.1213,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
+    },
+    "GBP/TRY": {
+      "sigmaAnnual": 0.0487,
+      "driftAnnual": 0.1426,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
+    },
+    "EUR/USD": {
+      "sigmaAnnual": 0.0577,
+      "driftAnnual": -0.0387,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
+    },
+    "GBP/USD": {
+      "sigmaAnnual": 0.0482,
+      "driftAnnual": -0.0175,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
+    },
+    "USD/CHF": {
+      "sigmaAnnual": 0.0648,
+      "driftAnnual": 0.0313,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
+    },
+    "USD/JPY": {
+      "sigmaAnnual": 0.0793,
+      "driftAnnual": 0.0606,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
+    },
+    "USD/CNH": {
+      "sigmaAnnual": 0.0108,
+      "driftAnnual": -0.0582,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb (CNY proxy)"
+    },
+    "USD/MXN": {
+      "sigmaAnnual": 0.1078,
+      "driftAnnual": -0.0236,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
+    },
+    "USD/BRL": {
+      "sigmaAnnual": 0.1748,
+      "driftAnnual": -0.0728,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
+    },
+    "USD/ZAR": {
+      "sigmaAnnual": 0.0983,
+      "driftAnnual": -0.0599,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
+    },
+    "USD/INR": {
+      "sigmaAnnual": 0.0334,
+      "driftAnnual": 0.083,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb"
+    },
+    "XAU/USD": {
+      "sigmaAnnual": 0.18,
+      "driftAnnual": 0,
+      "asOf": "n/a",
+      "source": "fallback"
+    },
+    "XAG/USD": {
+      "sigmaAnnual": 0.3,
+      "driftAnnual": 0,
+      "asOf": "n/a",
+      "source": "fallback"
+    },
+    "GAU/TRY": {
+      "sigmaAnnual": 0.1807,
+      "driftAnnual": 0.1601,
+      "asOf": "2026-10-09",
+      "source": "frankfurter-ecb (USD/TRY) + fallback (XAU)"
+    }
+  }
+}
