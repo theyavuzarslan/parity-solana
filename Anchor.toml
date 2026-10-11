@@ -1,0 +1,20 @@
+[toolchain]
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.devnet]
+parity = "55jabap7VG6LKKJtidxVRBuLaLzFz6P96uPUicR2e4EQ"
+
+[programs.localnet]
+parity = "55jabap7VG6LKKJtidxVRBuLaLzFz6P96uPUicR2e4EQ"
+
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "cargo test"
+
+[hooks]

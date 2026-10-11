@@ -1,0 +1,1 @@
+{ "name": "parity-solana", "private": true, "scripts": { "test:advisor": "pnpm --filter advisor test" } }
