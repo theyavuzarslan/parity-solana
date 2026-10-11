@@ -372,6 +372,13 @@ pub fn handle_liquidate(ctx: Context<Liquidate>) -> Result<()> {
 pub fn handle_settle(ctx: Context<Settle>) -> Result<()> {
     let a = &ctx.accounts;
     let mut pos: Position = Position::clone(&a.position);
+    require!(
+        matches!(pos.status, Status::Open | Status::Called | Status::PartiallyLiquidated),
+        ParityError::PositionClosed
+    );
+    // Maturity before the oracle read, so an early call reports NotMatured even when the market
+    // is closed or the price is stale.
+    require!(effective_now(&a.config)? >= pos.maturity, ParityError::NotMatured);
     let (now, px) = read_price(
         &a.config,
         &pos,
@@ -380,7 +387,6 @@ pub fn handle_settle(ctx: Context<Settle>) -> Result<()> {
         &a.price_a.to_account_info(),
         &a.price_b.to_account_info(),
     )?;
-    require!(now >= pos.maturity, ParityError::NotMatured);
     // τ = max(maturity − now, 0) = 0, so the forward equals spot.
     let (pnl_long, loser, _equity) = evaluate(&pos, &a.market, &a.rate_base, &a.rate_quote, &px, now)?;
     let close = full_close(&mut pos, pnl_long, loser, a.insurance.amount, None)?;

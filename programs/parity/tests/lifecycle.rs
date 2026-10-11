@@ -2,7 +2,11 @@
 //! (loser margin → insurance → winner haircut), settlement at/after maturity, payout-account
 //! constraints, Token-2022 collateral, and exact token conservation.
 mod common;
-use anchor_lang::prelude::Pubkey;
+use anchor_lang::{
+    prelude::Pubkey,
+    solana_program::{program_pack::Pack, system_instruction},
+};
+use anchor_spl::token::spl_token;
 use common::*;
 use parity::{
     math::{forward, pnl_long_usd},
@@ -19,6 +23,8 @@ const TENOR: u16 = 90;
 /// USD/TRY prices at expo -5.
 const P_42: i64 = 4_200_000;
 const P_30: i64 = 3_000_000;
+/// Default per-transaction compute limit without a ComputeBudget instruction (one instruction).
+const CU_LIMIT: u64 = 200_000;
 
 struct T {
     c: Ctx,
@@ -108,6 +114,18 @@ fn liq(t: &mut T) -> TxResult {
 fn settle_now(t: &mut T) -> TxResult {
     let keeper = t.keeper.insecure_clone();
     settle(&mut t.c, &keeper, t.position, t.pa, t.pa)
+}
+
+/// A plain (non-associated) SPL Token account for `owner`, created at a fresh keypair address.
+fn create_token_account(c: &mut Ctx, owner: Pubkey, mint: Pubkey) -> Pubkey {
+    let kp = Keypair::new();
+    let len = spl_token::state::Account::LEN;
+    let lamports = c.svm.minimum_balance_for_rent_exemption(len);
+    let admin = c.admin.insecure_clone();
+    let create = system_instruction::create_account(&admin.pubkey(), &kp.pubkey(), lamports, len as u64, &TOKEN_PROGRAM);
+    let init = spl_token::instruction::initialize_account3(&TOKEN_PROGRAM, &kp.pubkey(), &mint, &owner).unwrap();
+    send(c, &[create, init], &[&admin, &kp]).unwrap();
+    kp.pubkey()
 }
 
 fn bps(x: u64, b: u64) -> u64 {
@@ -237,6 +255,9 @@ fn partial_falls_through_to_full() {
         (t.c.balance(t.long_ata()), t.c.balance(t.short_ata()), t.insurance(), t.c.balance(t.keeper_ata()));
     let pnl = expected_pnl(&t.c, &p0, price);
     let meta = liq(&mut t).unwrap();
+    // Heaviest path: two evaluations and up to 8 token transfers.
+    println!("liquidate (partial + full) CU: {}", meta.compute_units_consumed);
+    assert!(meta.compute_units_consumed < CU_LIMIT);
     let part: PartiallyLiquidated = event(&meta);
     let full: Liquidated = event(&meta);
 
@@ -382,6 +403,8 @@ fn settle_before_maturity_rejected() {
     let mut t = setup_position(false);
     let p = t.pos();
     warp_time(&mut t.c, p.maturity - 1);
+    // Reported before the oracle read: a stale price (market closed) still yields NotMatured.
+    assert_error(settle_now(&mut t).unwrap_err(), "NotMatured");
     write_px(&mut t.c, t.pa, P_42);
     assert_error(settle_now(&mut t).unwrap_err(), "NotMatured");
     // The demo clock offset counts towards maturity.
@@ -417,6 +440,12 @@ fn payout_redirect_rejected() {
     i.accounts[long_idx].pubkey = s;
     i.accounts[short_idx].pubkey = l;
     assert_error(send(&mut t.c, &[i], &[&attacker]).unwrap_err(), "ConstraintTokenOwner");
+    // A non-canonical token account that IS owned by the long fails the ATA address check.
+    let taker = t.c.taker.pubkey();
+    let side_account = create_token_account(&mut t.c, taker, mint);
+    let mut i = base.clone();
+    i.accounts[long_idx].pubkey = side_account;
+    assert_error(send(&mut t.c, &[i], &[&attacker]).unwrap_err(), "ConstraintAssociated");
     assert_eq!(t.pos().status, Status::Open);
 
     // Liquidate: attacker's ATA as short_ata.
@@ -447,7 +476,10 @@ fn usdg_open_and_settle() {
     write_px(&mut t.c, t.pa, price);
     let pnl = expected_pnl(&t.c, &p, price);
     let (long0, short0) = (t.c.balance(t.long_ata()), t.c.balance(t.short_ata()));
-    let ev: Settled = event(&settle_now(&mut t).unwrap());
+    let meta = settle_now(&mut t).unwrap();
+    println!("settle (Token-2022) CU: {}", meta.compute_units_consumed);
+    assert!(meta.compute_units_consumed < CU_LIMIT);
+    let ev: Settled = event(&meta);
     assert_eq!(ev.pnl_long, pnl);
     assert_eq!(t.c.balance(t.long_ata()), long0 + (IM as i128 + pnl) as u64);
     assert_eq!(t.c.balance(t.short_ata()), short0 + (IM as i128 - pnl) as u64);
