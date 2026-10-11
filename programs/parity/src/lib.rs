@@ -6,6 +6,7 @@ pub mod constants;
 pub mod errors;
 pub mod instructions;
 pub mod math;
+pub mod oracle;
 pub mod state;
 
 pub use instructions::*;
@@ -49,5 +50,10 @@ pub mod parity {
 
     pub fn fund_insurance(ctx: Context<FundInsurance>, amount: u64) -> Result<()> {
         instructions::admin::handle_fund_insurance(ctx, amount)
+    }
+
+    /// Permissionless view: read a market price (demo override or Pyth) and emit `PriceRead`.
+    pub fn debug_price(ctx: Context<DebugPrice>, market_id: u16) -> Result<()> {
+        instructions::oracle_view::handle_debug_price(ctx, market_id)
     }
 }
