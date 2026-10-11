@@ -145,9 +145,17 @@ body {
 .coupon-notch[data-edge="top"] { top: -10px; }
 .coupon-notch[data-edge="bottom"] { bottom: -10px; }
 
-.perf-y { border-left: 1px dashed var(--color-navy); }
-.perf-x { border-top: 1px dashed var(--color-navy); }
-.perf-x-copy { border-top: 1px dashed var(--color-copy-ink); }
+@utility perf-y {
+  border-top-width: 0;
+  border-left: 1px dashed var(--color-navy);
+}
+@utility perf-x {
+  border-left-width: 0;
+  border-top: 1px dashed var(--color-navy);
+}
+@utility perf-x-copy {
+  border-top: 1px dashed var(--color-copy-ink);
+}
 
 /* ---------- Carbon copy ---------- */
 .carbon-copy {
