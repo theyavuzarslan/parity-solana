@@ -1,0 +1,449 @@
+/**
+ * Mock implementation of ParityData. Prices are live from Pyth when the feed
+ * answers, otherwise labelled demo spots. Wallet, offers, positions,
+ * signatures and the dispatch crank are simulated in memory and labelled
+ * "demo" / "mock" in the UI. State lives for the browser session (lost on a
+ * hard reload) — the chain provider replaces all of it with devnet accounts.
+ */
+import { DEMO_SPOTS, FEEDS, MARKETS, marketConfig, PROTOCOL, SEED_RATES, type FeedKey } from "./markets";
+import { carryPct, forwardFor, marketStatus, pnlUsd, strikeFor, usdPerQuote } from "./pricing";
+import { fetchLive, type LiveSnapshot } from "./pyth";
+import type {
+  DemoState, DispatchEntry, FaucetResult, FeedHealth, LadderQuote, LadderRequest, LockResult,
+  MarketId, MarketQuote, Mint, Offer, ParityData, Position, Preflight, Rate, RateCode, RungQuote, Side, Tenor,
+} from "./types";
+
+const DAY = 86_400;
+const TENORS: Tenor[] = [30, 90, 180];
+const LIVE_TTL_SECS = 30;
+export const FAUCET_AMOUNT = 1_000;
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+const ceil2 = (n: number) => Math.ceil(n * 100 - 1e-9) / 100;
+
+const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+function fakeBase58(len: number, rnd: () => number): string {
+  let s = "";
+  for (let i = 0; i < len; i++) s += B58[Math.floor(rnd() * B58.length)];
+  return s;
+}
+/** Small deterministic PRNG so demo ids are stable between renders and tests. */
+function mulberry32(seed: number) {
+  let a = seed;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+interface InternalPosition extends Omit<Position, "pnlUsd" | "markPrice"> {
+  breachCount: number;
+  /** frozen result for terminal positions */
+  finalPnlUsd?: number;
+  finalMark?: number;
+}
+
+export interface MockOptions {
+  /** start with demo mode on (default true — keeps the lock flow usable when FX is closed) */
+  demoMode?: boolean;
+  /** starting mock wallet balances */
+  balances?: Partial<Record<Mint, number>>;
+  connected?: boolean;
+  /** disable network polling (tests) */
+  offline?: boolean;
+  /** injectable clock, ms */
+  now?: () => number;
+}
+
+export function createMockProvider(opts: MockOptions = {}): ParityData & { _debug: () => unknown } {
+  const realNow = opts.now ?? (() => Date.now());
+  const rnd = mulberry32(0xc910bf11);
+  const listeners = new Set<() => void>();
+  const notify = () => listeners.forEach((l) => l());
+
+  const startSec = Math.floor(realNow() / 1000);
+  let rates: Rate[] = SEED_RATES.map((r) => ({ ...r, updatedAt: startSec }));
+  let demo: DemoState = { demoMode: opts.demoMode ?? true, clockOffsetDays: 0, shocks: {} };
+  let live: LiveSnapshot = { ok: false, prices: {}, checkedAt: 0, note: "Live feed not checked yet." };
+  let livePending: Promise<void> | null = null;
+  let wallet = {
+    connected: opts.connected ?? false,
+    address: opts.connected ? fakeBase58(44, rnd) : (null as string | null),
+    label: opts.connected ? "Demo wallet (mock)" : (null as string | null),
+    balances: { USDC: opts.balances?.USDC ?? 0, USDG: opts.balances?.USDG ?? 0 } as Record<Mint, number>,
+  };
+  let log: DispatchEntry[] = [];
+  let positions: InternalPosition[] | null = null;
+  let counter = 6;
+
+  const nowSec = () => Math.floor(realNow() / 1000) + demo.clockOffsetDays * DAY;
+
+  // ---------- Offers (demo makers) ----------
+  const offers: Offer[] = MARKETS.flatMap((m, i) => {
+    const base = m.group === "Lira" || m.group === "Gold" ? 25 : m.group === "EM peers" ? 18 : 8;
+    return (["long", "short"] as Side[]).map((makerSide, j) => ({
+      id: `offer-${i + 1}-${j + 1}`,
+      market: m.id,
+      maker: j === 0 ? "Demo maker A" : "Demo maker B",
+      makerSide,
+      spreadBps: base + (j === 0 ? 0 : 5) + (i % 3) * 2,
+      minTenorDays: 1,
+      maxTenorDays: 365,
+      capacityUsd: m.group === "Lira" ? 50_000 : 20_000,
+      mint: j === 0 ? "USDC" : "USDG",
+      demo: true as const,
+    }));
+  });
+
+  // ---------- Prices ----------
+  async function refreshLive(force = false) {
+    if (opts.offline) return;
+    const now = Math.floor(Date.now() / 1000);
+    if (!force && now - live.checkedAt < LIVE_TTL_SECS) return;
+    if (!livePending) {
+      livePending = fetchLive().then((snap) => {
+        // keep the last good prices if a poll fails
+        live = snap.ok ? snap : { ...live, ok: false, checkedAt: snap.checkedAt, note: snap.note };
+        livePending = null;
+      });
+    }
+    await livePending;
+  }
+
+  function feedSpots(): { spots: Record<FeedKey, number>; publish: Record<FeedKey, number | null> } {
+    const spots = {} as Record<FeedKey, number>;
+    const publish = {} as Record<FeedKey, number | null>;
+    for (const k of Object.keys(FEEDS) as FeedKey[]) {
+      const lp = live.prices[k];
+      spots[k] = lp?.price ?? DEMO_SPOTS[k];
+      publish[k] = lp?.publishTime ?? null;
+    }
+    return { spots, publish };
+  }
+
+  function quoteFor(id: MarketId): MarketQuote {
+    const m = marketConfig(id);
+    const { spots, publish } = feedSpots();
+    let spot = m.compose(spots);
+    const pubs = m.feeds.map((f) => publish[f]);
+    const hasLive = live.ok && pubs.every((p) => p !== null);
+    let source: MarketQuote["source"];
+    let publishTime: number;
+    if (demo.demoMode) {
+      spot *= demo.shocks[id] ?? 1;
+      source = "demo-override";
+      publishTime = nowSec();
+    } else if (hasLive) {
+      source = "pyth";
+      publishTime = Math.min(...(pubs as number[]));
+    } else {
+      source = "demo-static";
+      publishTime = startSec;
+    }
+    const status = marketStatus({ source, publishTime, nowSec: Math.floor(realNow() / 1000) });
+    const forwards = Object.fromEntries(TENORS.map((t) => [t, forwardFor(id, spot, rates, t)])) as Record<Tenor, number>;
+    const best = offers.filter((o) => o.market === id).reduce<number | null>((acc, o) => (acc === null || o.spreadBps < acc ? o.spreadBps : acc), null);
+    return { id, group: m.group, base: m.base, quote: m.quote, spot, source, publishTime, status, forwards, carryPct: carryPct(id, rates), im: m.im, bestSpreadBps: best };
+  }
+
+  // ---------- Positions ----------
+  function seedPositions(): InternalPosition[] {
+    const t0 = nowSec();
+    const usdtry = quoteFor("USD/TRY").spot;
+    const eurtry = quoteFor("EUR/TRY").spot;
+    const mk = (p: Partial<InternalPosition> & Pick<InternalPosition, "market" | "side" | "notionalUsd" | "strike" | "tenorDays" | "status">, ageDays: number, no: string): InternalPosition => {
+      const m = marketConfig(p.market);
+      const im = round2(p.notionalUsd * m.im);
+      return {
+        id: `pos-${no}`, no, mint: "USDC", quantity: 0, openedAt: t0 - ageDays * DAY, maturity: t0 + (p.tenorDays - ageDays) * DAY,
+        imUsd: im, marginUsd: im, closedFraction: 0, breachCount: 0, demo: true, ...p,
+      } as InternalPosition;
+    };
+    const withQty = (p: InternalPosition, spot: number) => ({ ...p, quantity: p.notionalUsd / (spot * usdPerQuote(p.market, spot)) });
+
+    // Strikes are set so the marked PnL lands where the story needs it.
+    const fwd = (id: MarketId, spot: number, days: number) => forwardFor(id, spot, rates, days);
+    // 1 · OPEN: freelancer short USD/TRY, 60 of 90 days left, roughly flat.
+    const openSpot = usdtry;
+    const p1 = withQty(mk({ market: "USD/TRY", side: "short", notionalUsd: 1_500, tenorDays: 90, status: "Open", strike: fwd("USD/TRY", openSpot, 60) * 1.004 }, 30, "0001"), openSpot);
+    // 2 · MARGIN CALL: exporter short EUR/TRY; euro rallied, equity ≈ 40% of IM.
+    const p2base = mk({ market: "EUR/TRY", side: "short", notionalUsd: 2_000, tenorDays: 60, status: "Called", strike: 0 }, 20, "0002");
+    const p2 = withQty(p2base, eurtry);
+    // long PnL needed: user short loses 120 → long gains 120: Q(F−K)/S = 120 → K = F − 120·S/Q
+    const f2 = fwd("EUR/TRY", eurtry, 40);
+    p2.strike = f2 - (120 * eurtry) / p2.quantity;
+    // 3 · PARTIAL 30%: importer long USD/CNH, 30% closed by the crank, rest still under water.
+    const cnh = quoteFor("USD/CNH").spot;
+    const p3 = withQty(mk({ market: "USD/CNH", side: "long", notionalUsd: 1_400, tenorDays: 90, status: "PartiallyLiquidated", closedFraction: 0.3, strike: 0, mint: "USDG" }, 45, "0003"), cnh);
+    p3.imUsd = round2(p3.notionalUsd * 0.03);
+    p3.marginUsd = round2(p3.imUsd * 0.62);
+    p3.strike = fwd("USD/CNH", cnh, 45) + (p3.imUsd * 0.25 * cnh) / p3.quantity;
+    // 4 · VOID: freelancer short USD/TRY $3,000 caught by a 12% overnight gap.
+    // Owed 412.50 = loser margin 300.00 → insurance 90.00 → winner haircut 22.50.
+    const p4 = withQty(mk({ market: "USD/TRY", side: "short", notionalUsd: 3_000, tenorDays: 90, status: "Liquidated", strike: 0, mint: "USDG" }, 50, "0004"), usdtry);
+    p4.strike = usdtry * 0.88;
+    p4.marginUsd = 0;
+    p4.finalPnlUsd = -300;
+    p4.finalMark = usdtry * 0.88 * 1.1375;
+    p4.waterfall = { owedUsd: 412.5, loserMarginUsd: 300, insuranceUsd: 90, winnerHaircutUsd: 22.5 };
+    // 5 · SETTLED: freelancer short USD/TRY $500, 30 days, settled at the fixing.
+    const p5 = withQty(mk({ market: "USD/TRY", side: "short", notionalUsd: 500, tenorDays: 30, status: "Settled", strike: 0 }, 32, "0005"), usdtry);
+    p5.strike = usdtry * 1.0081;
+    p5.finalMark = usdtry;
+    p5.finalPnlUsd = round2(pnlUsd("USD/TRY", "short", p5.quantity, p5.strike, usdtry));
+    p5.marginUsd = 0;
+    return [p1, p2, p3, p4, p5];
+  }
+
+  function ensurePositions(): InternalPosition[] {
+    if (!positions) positions = seedPositions();
+    return positions;
+  }
+
+  function markOf(p: InternalPosition): number {
+    const q = quoteFor(p.market);
+    const remaining = Math.max(0, (p.maturity - nowSec()) / DAY);
+    return forwardFor(p.market, q.spot, rates, remaining);
+  }
+
+  function present(p: InternalPosition): Position {
+    const terminal = p.status === "Settled" || p.status === "Liquidated";
+    const mark = terminal ? (p.finalMark ?? p.strike) : markOf(p);
+    const pnl = terminal ? (p.finalPnlUsd ?? 0) : round2(pnlUsd(p.market, p.side, p.quantity, p.strike, mark));
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { breachCount, finalMark, finalPnlUsd, ...rest } = p;
+    return { ...rest, pnlUsd: pnl, markPrice: mark };
+  }
+
+  const entry = (action: string, effect: string): DispatchEntry => {
+    const e = { id: `log-${log.length + 1}`, at: realNow(), action, effect };
+    log = [e, ...log].slice(0, 60);
+    return e;
+  };
+
+  const done = (e: DispatchEntry) => { notify(); return e; };
+
+  // ---------- Ladder ----------
+  function quoteLadderSync(req: LadderRequest): LadderQuote {
+    const q = quoteFor(req.market);
+    const makerSide: Side = req.side === "short" ? "long" : "short";
+    const t0 = nowSec();
+    const rungs: RungQuote[] = req.rungs.map((r) => {
+      const forward = forwardFor(req.market, q.spot, rates, r.tenorDays);
+      const candidates = offers
+        .filter((o) => o.market === req.market && o.makerSide === makerSide && r.tenorDays >= o.minTenorDays && r.tenorDays <= o.maxTenorDays && o.capacityUsd >= r.amount)
+        .sort((a, b) => a.spreadBps - b.spreadBps);
+      const best = candidates[0] ?? null;
+      const spreadBps = best?.spreadBps ?? 0;
+      const strike = strikeFor(forward, req.side, spreadBps);
+      const notionalUsd = r.amount;
+      const qty = notionalUsd / (q.spot * usdPerQuote(req.market, q.spot));
+      return {
+        ...r, forward, strike, notionalUsd, spreadBps, offerId: best?.id ?? null,
+        marginUsd: ceil2(notionalUsd * q.im),
+        feeUsd: ceil2((notionalUsd * PROTOCOL.openFeeBps) / 10_000),
+        maturity: t0 + r.tenorDays * DAY,
+        lockedQuote: qty * strike,
+      };
+    });
+    const totalMarginUsd = round2(rungs.reduce((a, r) => a + r.marginUsd, 0));
+    const totalFeeUsd = round2(rungs.reduce((a, r) => a + r.feeUsd, 0));
+    return { market: req.market, side: req.side, mint: req.mint, rungs, totalMarginUsd, totalFeeUsd, requiredUsd: round2(totalMarginUsd + totalFeeUsd), openFeeBps: PROTOCOL.openFeeBps, imPct: q.im * 100 };
+  }
+
+  function preflightSync(quote: LadderQuote): Preflight {
+    if (!wallet.connected) return { ok: false, reason: "no-wallet" };
+    const q = quoteFor(quote.market);
+    if (q.status !== "OPEN") return { ok: false, reason: "market-closed", status: q.status };
+    if (quote.rungs.some((r) => !r.offerId)) return { ok: false, reason: "no-offer" };
+    const bal = wallet.balances[quote.mint];
+    if (bal < quote.requiredUsd) return { ok: false, reason: "need-tokens", requiredUsd: quote.requiredUsd, balanceUsd: bal };
+    return { ok: true };
+  }
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  const provider: ParityData & { _debug: () => unknown } = {
+    async getMarkets() {
+      await refreshLive();
+      return MARKETS.map((m) => quoteFor(m.id));
+    },
+    async getRates() { return rates.map((r) => ({ ...r })); },
+    async getOffers(market) { return offers.filter((o) => !market || o.market === market); },
+    async getPositions() {
+      await refreshLive();
+      return [...ensurePositions()].sort((a, b) => b.openedAt - a.openedAt).map(present);
+    },
+    async getWallet() { return { ...wallet, balances: { ...wallet.balances } }; },
+    async getDemo() { return { ...demo, shocks: { ...demo.shocks } }; },
+    async getDispatchLog() { return [...log]; },
+    async getFeedHealth(): Promise<FeedHealth> {
+      await refreshLive();
+      return { live: live.ok, checkedAt: live.checkedAt || null, note: live.note };
+    },
+
+    async connect() {
+      await sleep(opts.offline ? 0 : 450);
+      wallet = { ...wallet, connected: true, address: wallet.address ?? fakeBase58(44, rnd), label: "Demo wallet (mock)" };
+      notify();
+      return provider.getWallet();
+    },
+    async disconnect() {
+      wallet = { ...wallet, connected: false };
+      notify();
+      return provider.getWallet();
+    },
+    async faucet(mint): Promise<FaucetResult> {
+      if (!wallet.connected) throw new Error("Connect a wallet first.");
+      await sleep(opts.offline ? 0 : 700);
+      wallet.balances[mint] = round2(wallet.balances[mint] + FAUCET_AMOUNT);
+      notify();
+      return { mint, amount: FAUCET_AMOUNT, balance: wallet.balances[mint], signature: fakeBase58(64, rnd) };
+    },
+
+    async quoteLadder(req) { return quoteLadderSync(req); },
+    async preflight(quote) { return preflightSync(quote); },
+    async lockLadder(req): Promise<LockResult> {
+      const quote = quoteLadderSync(req);
+      const pf = preflightSync(quote);
+      if (!pf.ok) throw new Error(`Preflight failed: ${pf.reason}`);
+      await sleep(opts.offline ? 0 : 1400);
+      wallet.balances[req.mint] = round2(wallet.balances[req.mint] - quote.requiredUsd);
+      const t0 = nowSec();
+      const q = quoteFor(req.market);
+      const created: InternalPosition[] = quote.rungs.map((r) => {
+        counter += 1;
+        const no = String(counter).padStart(4, "0");
+        return {
+          id: `pos-${no}`, no, market: req.market, side: req.side, notionalUsd: r.notionalUsd,
+          quantity: r.notionalUsd / (q.spot * usdPerQuote(req.market, q.spot)), strike: r.strike,
+          openedAt: t0 + counter, maturity: r.maturity, tenorDays: r.tenorDays, mint: req.mint, status: "Open",
+          imUsd: r.marginUsd, marginUsd: r.marginUsd, closedFraction: 0, breachCount: 0, demo: true,
+        };
+      });
+      for (const r of quote.rungs) {
+        const o = offers.find((x) => x.id === r.offerId);
+        if (o) o.capacityUsd -= r.notionalUsd;
+      }
+      positions = [...created, ...ensurePositions()];
+      entry("LOCK LADDER", `${created.length} coupons on ${req.market} · margin $${quote.totalMarginUsd.toFixed(2)} + fee $${quote.totalFeeUsd.toFixed(2)} (mock tx)`);
+      notify();
+      return { signature: fakeBase58(88, rnd), positions: created.map(present) };
+    },
+    async addMargin(positionId, amountUsd) {
+      const p = ensurePositions().find((x) => x.id === positionId);
+      if (!p) throw new Error("Unknown position");
+      if (!wallet.connected) throw new Error("Connect a wallet first.");
+      if (wallet.balances[p.mint] < amountUsd) throw new Error(`Not enough test ${p.mint}.`);
+      await sleep(opts.offline ? 0 : 600);
+      wallet.balances[p.mint] = round2(wallet.balances[p.mint] - amountUsd);
+      p.marginUsd = round2(p.marginUsd + amountUsd);
+      const eq = p.marginUsd + present(p).pnlUsd;
+      if (p.status === "Called" && eq >= PROTOCOL.callEquity * p.imUsd) p.status = "Open";
+      entry("ADD MARGIN", `No. ${p.no} +$${amountUsd.toFixed(2)} ${p.mint} → equity $${eq.toFixed(2)}`);
+      notify();
+      return present(p);
+    },
+
+    demo: {
+      async setDemoMode(on) {
+        demo = { ...demo, demoMode: on };
+        return done(entry(on ? "DEMO MODE ON" : "DEMO MODE OFF", on ? "Demo prices supersede Pyth; markets open." : "Pyth prices only; markets follow real hours."));
+      },
+      async shock(market, pct) {
+        if (!demo.demoMode) return done(entry(`SHOCK ${market} ${pct > 0 ? "+" : ""}${pct}%`, "Refused — demo mode is off."));
+        const prev = quoteFor(market).spot;
+        demo = { ...demo, shocks: { ...demo.shocks, [market]: (demo.shocks[market] ?? 1) * (1 + pct / 100) } };
+        const next = quoteFor(market).spot;
+        return done(entry(`SHOCK ${market} ${pct > 0 ? "+" : "−"}${Math.abs(pct)}%`, `Spot ${prev.toFixed(4)} → ${next.toFixed(4)}`));
+      },
+      async advanceClock(days) {
+        if (!demo.demoMode) return done(entry(`CLOCK +${days}D`, "Refused — demo mode is off."));
+        demo = { ...demo, clockOffsetDays: demo.clockOffsetDays + days };
+        return done(entry(`CLOCK +${days}D`, `Protocol clock now +${demo.clockOffsetDays} days.`));
+      },
+      async setRate(code: RateCode, ratePct: number) {
+        const before = rates.find((r) => r.code === code)?.ratePct;
+        rates = rates.map((r) => (r.code === code ? { ...r, ratePct, updatedAt: nowSec() } : r));
+        return done(entry(`SET RATE ${code}`, `${before?.toFixed(2)}% → ${ratePct.toFixed(2)}% (forwards repriced)`));
+      },
+      async markNow() {
+        let called = 0, breached = 0, healthy = 0;
+        for (const p of ensurePositions()) {
+          if (p.status === "Settled" || p.status === "Liquidated") continue;
+          const eq = p.marginUsd + present(p).pnlUsd;
+          if (eq < PROTOCOL.liqEquity * p.imUsd) { p.breachCount += 1; breached += 1; if (p.status === "Open") p.status = "Called"; }
+          else if (eq < PROTOCOL.callEquity * p.imUsd) { p.breachCount = 0; called += 1; if (p.status === "Open") p.status = "Called"; }
+          else { p.breachCount = 0; healthy += 1; if (p.status === "Called") p.status = "Open"; }
+        }
+        return done(entry("MARK NOW", `${healthy} healthy · ${called} on call · ${breached} below 20% (breach counted)`));
+      },
+      async liquidate() {
+        let partial = 0, full = 0;
+        for (const p of ensurePositions()) {
+          if (p.status === "Settled" || p.status === "Liquidated") continue;
+          const pres = present(p);
+          const eq = p.marginUsd + pres.pnlUsd;
+          if (eq >= PROTOCOL.liqEquity * p.imUsd) continue;
+          // close 30%: realise 30% of PnL, scale size and IM to 70%
+          const realised = pres.pnlUsd * PROTOCOL.partialLiq;
+          const penalty = (p.notionalUsd * PROTOCOL.partialLiq * PROTOCOL.liqPenaltyBps) / 10_000;
+          p.marginUsd = round2(p.marginUsd + realised - penalty);
+          p.quantity *= 1 - PROTOCOL.partialLiq;
+          p.notionalUsd = round2(p.notionalUsd * (1 - PROTOCOL.partialLiq));
+          p.imUsd = round2(p.imUsd * (1 - PROTOCOL.partialLiq));
+          p.closedFraction = round2(1 - (1 - p.closedFraction) * (1 - PROTOCOL.partialLiq));
+          const eq2 = p.marginUsd + present(p).pnlUsd;
+          if (eq2 < PROTOCOL.liqEquity * p.imUsd) {
+            const owed = round2(Math.max(0, -present(p).pnlUsd));
+            const fromMargin = round2(Math.min(Math.max(p.marginUsd, 0), owed));
+            const fromInsurance = round2(Math.min(owed - fromMargin, 250));
+            const haircut = round2(owed - fromMargin - fromInsurance);
+            p.waterfall = { owedUsd: owed, loserMarginUsd: fromMargin, insuranceUsd: fromInsurance, winnerHaircutUsd: haircut };
+            p.finalPnlUsd = -fromMargin;
+            p.finalMark = markOf(p);
+            p.marginUsd = 0;
+            p.status = "Liquidated";
+            full += 1;
+          } else {
+            p.status = "PartiallyLiquidated";
+            partial += 1;
+          }
+        }
+        return done(entry("LIQUIDATE", partial + full === 0 ? "Nothing below the 20% line." : `${partial} partial (30%) · ${full} closed in full`));
+      },
+      async settle() {
+        let n = 0;
+        const t = nowSec();
+        for (const p of ensurePositions()) {
+          if (p.status === "Settled" || p.status === "Liquidated" || p.maturity > t) continue;
+          const spot = quoteFor(p.market).spot;
+          p.finalMark = spot;
+          p.finalPnlUsd = round2(pnlUsd(p.market, p.side, p.quantity, p.strike, spot));
+          wallet.balances[p.mint] = round2(wallet.balances[p.mint] + Math.max(0, p.marginUsd + p.finalPnlUsd));
+          p.marginUsd = 0;
+          p.status = "Settled";
+          n += 1;
+        }
+        return done(entry("SETTLE", n === 0 ? "No coupon has reached its settlement date." : `${n} coupon${n > 1 ? "s" : ""} settled at spot; payouts to owners' token accounts.`));
+      },
+      async reset() {
+        demo = { demoMode: true, clockOffsetDays: 0, shocks: {} };
+        rates = SEED_RATES.map((r) => ({ ...r, updatedAt: nowSec() }));
+        positions = null;
+        return done(entry("RESET", "Demo prices, clock, rates and demo coupons restored."));
+      },
+    },
+
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+
+    _debug: () => ({ demo, wallet, live, positions }),
+  };
+
+  return provider;
+}

@@ -1,0 +1,188 @@
+@import "tailwindcss";
+
+/*
+ * Parity — Coupon Wallet tokens (DESIGN.md §2–§4). These are the only colour,
+ * type and space values the app may use; components reference them through the
+ * Tailwind utilities generated below (bg-navy, text-carbon, border-hairline …)
+ * or through var(--…) in this file. Never inline a colour or font elsewhere.
+ */
+@theme {
+  --color-*: initial;
+  --color-navy: oklch(23% 0.06 265);
+  --color-navy-2: oklch(33% 0.07 265);
+  --color-red: oklch(57% 0.21 27);
+  --color-red-press: oklch(50% 0.2 27);
+  --color-coupon: oklch(100% 0 0);
+  --color-stock: oklch(96.5% 0.004 95);
+  --color-carbon: oklch(37% 0.14 295);
+  --color-copy: oklch(82% 0.06 295);
+  --color-copy-ink: oklch(30% 0.12 295);
+  --color-ok: oklch(52% 0.12 155);
+  --color-warn: oklch(70% 0.15 70);
+  --color-rule: oklch(23% 0.06 265 / 0.9);
+  --color-hairline: oklch(23% 0.06 265 / 0.18);
+  --color-focus: oklch(57% 0.21 27);
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  /* Type scale (rem): 0.75 · 0.875 · 1 · 1.25 · 1.5 · 2 · 3 · 4.5 */
+  --text-*: initial;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2rem;
+  --text-3xl: 3rem;
+  --text-4xl: 4.5rem;
+
+  --radius-coupon: 10px;
+  --radius-btn: 4px;
+  --radius-chip: 3px;
+
+  --shadow-coupon: 4px 4px 0 var(--color-navy);
+  --shadow-coupon-sm: 3px 3px 0 var(--color-navy);
+}
+
+@theme inline {
+  --font-display: var(--font-barlow-condensed), "Arial Narrow", sans-serif;
+  --font-body: var(--font-barlow), system-ui, sans-serif;
+  --font-mono: var(--font-azeret-mono), ui-monospace, monospace;
+}
+
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  color-scheme: light;
+}
+
+html {
+  background: var(--color-stock);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-stock);
+  color: var(--color-navy);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
+}
+
+::selection {
+  background: var(--color-copy);
+  color: var(--color-copy-ink);
+}
+
+/* ---------- Type roles ---------- */
+.t-display {
+  font-family: var(--font-display);
+  font-weight: 800;
+  text-transform: uppercase;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+.t-label {
+  font-family: var(--font-display);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+}
+.t-num {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Panel title: the world's slash mark before condensed caps. */
+.panel-title::before {
+  content: "///";
+  color: var(--color-red);
+  margin-right: 0.45em;
+  letter-spacing: -0.04em;
+}
+
+/* ---------- Focus ---------- */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* ---------- Coupon ---------- */
+.coupon {
+  position: relative;
+  background: var(--color-coupon);
+  border: 2px solid var(--color-navy);
+  border-radius: var(--radius-coupon);
+  box-shadow: var(--shadow-coupon);
+  overflow: hidden;
+  isolation: isolate;
+}
+/* Punched notches at the tear line: discs of page stock outlined in navy, half hidden by the coupon edge. */
+.coupon-notch {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--color-stock);
+  border: 2px solid var(--color-navy);
+  transform: translateX(-50%);
+  z-index: 3;
+  pointer-events: none;
+}
+.coupon-notch[data-edge="top"] { top: -10px; }
+.coupon-notch[data-edge="bottom"] { bottom: -10px; }
+
+.perf-y { border-left: 1px dashed var(--color-navy); }
+.perf-x { border-top: 1px dashed var(--color-navy); }
+.perf-x-copy { border-top: 1px dashed var(--color-copy-ink); }
+
+/* ---------- Carbon copy ---------- */
+.carbon-copy {
+  position: relative;
+  background: var(--color-copy);
+  color: var(--color-copy-ink);
+  border-radius: var(--radius-coupon);
+}
+
+/* ---------- Stamp ink texture ---------- */
+.stamp {
+  --stamp-noise: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='70'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' seed='7'/><feComponentTransfer><feFuncA type='discrete' tableValues='1 1 1 1 0.45 1 1 1 1 1'/></feComponentTransfer></filter><rect width='140' height='70' filter='url(%23n)'/></svg>");
+  -webkit-mask-image: var(--stamp-noise);
+  mask-image: var(--stamp-noise);
+  -webkit-mask-size: 140px 70px;
+  mask-size: 140px 70px;
+}
+
+/* Inputs: strip native spinners so carbon numerals sit clean. */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --color-hairline: oklch(23% 0.06 265 / 0.9);
+  }
+  .stamp {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
