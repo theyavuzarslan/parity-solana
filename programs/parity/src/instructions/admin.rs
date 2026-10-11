@@ -204,8 +204,10 @@ pub struct InitCollateral<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handle_init_collateral(_ctx: Context<InitCollateral>) -> Result<()> {
-    Ok(())
+/// Rejects Token-2022 mints with forbidden extensions (fee, hook, permanent delegate,
+/// default state, non-transferable) so no vault can ever exist for one.
+pub fn handle_init_collateral(ctx: Context<InitCollateral>) -> Result<()> {
+    crate::instructions::offer::check_mint_extensions(&ctx.accounts.mint.to_account_info())
 }
 
 #[derive(Accounts)]

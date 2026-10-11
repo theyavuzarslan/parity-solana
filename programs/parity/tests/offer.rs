@@ -275,15 +275,67 @@ fn create_permanent_delegate_mint(c: &mut Ctx) -> Pubkey {
 }
 
 #[test]
-fn forbidden_token2022_extension_rejected() {
+fn init_collateral_rejects_forbidden_extension() {
     let mut c = setup();
     // Configure the protocol with a USDG that carries a PermanentDelegate.
     c.usdg = create_permanent_delegate_mint(&mut c);
-    let (usdg, maker) = (c.usdg, c.maker.pubkey());
-    mint_to(&mut c, usdg, maker, INITIAL_BALANCE).unwrap();
-    init_all(&mut c);
-    upsert_market(&mut c, usd_try_market_args()).unwrap();
+    let (usdc, usdg) = (c.usdc, c.usdg);
+    initialize(&mut c, default_params()).unwrap();
+    init_collateral(&mut c, usdc).unwrap();
+    assert_error(init_collateral(&mut c, usdg).unwrap_err(), "InvalidMint");
+    assert!(c.svm.get_account(&vault_pda(usdg)).map_or(true, |a| a.data.is_empty()));
+    assert!(c.svm.get_account(&insurance_pda(usdg)).map_or(true, |a| a.data.is_empty()));
+}
 
-    assert_error(create_offer(&mut c, usdg, default_offer()).unwrap_err(), "InvalidMint");
-    assert_eq!(c.balance(c.ata_of(maker, usdg)), INITIAL_BALANCE);
+#[test]
+fn cancel_with_swapped_mint_rejected() {
+    let mut c = setup_market();
+    let (usdc, usdg, maker) = (c.usdc, c.usdg, c.maker.pubkey());
+    create_offer(&mut c, usdc, default_offer()).unwrap();
+    // Seed the USDG vault so a swapped-mint cancel would have funds to drain.
+    create_offer(&mut c, usdg, OfferArgs { nonce: 2, ..default_offer() }).unwrap();
+    let offer = offer_pda(maker, 1);
+    let maker_kp = c.maker.insecure_clone();
+    let usdg_ata = c.ata_of(maker, usdg);
+    let i = cancel_offer_ix(&c, maker, offer, usdg, usdg_ata);
+    assert_error(send(&mut c, &[i], &[&maker_kp]).unwrap_err(), "InvalidMint");
+    assert_eq!(c.balance(vault_pda(usdg)), LOCKED_100K);
+    assert_eq!(c.balance(vault_pda(usdc)), LOCKED_100K);
+    assert!(c.fetch::<MakerOffer>(offer).active);
+}
+
+#[test]
+fn offer_events_emitted() {
+    let mut c = setup_market();
+    let (usdc, maker) = (c.usdc, c.maker.pubkey());
+    let offer = offer_pda(maker, 1);
+    let meta = create_offer(&mut c, usdc, default_offer()).unwrap();
+    let e: parity::OfferCreated = event(&meta);
+    assert_eq!(e.offer, offer);
+    assert_eq!(e.maker, maker);
+    assert_eq!(e.market_id, 0);
+    assert_eq!(e.mint, usdc);
+    assert_eq!(e.maker_side, Side::Short);
+    assert_eq!(e.spread_bps, 20);
+    assert_eq!(e.capacity_usd, CAP_100K);
+    assert_eq!(e.margin_locked, LOCKED_100K);
+
+    let meta = cancel_offer(&mut c, offer, usdc).unwrap();
+    let e: parity::OfferCancelled = event(&meta);
+    assert_eq!(e.offer, offer);
+    assert_eq!(e.refunded, LOCKED_100K);
+}
+
+/// Decode the first Anchor event of type `E` from a transaction's `Program data:` logs.
+fn event<E: anchor_lang::Event + anchor_lang::AnchorDeserialize>(meta: &litesvm::types::TransactionMetadata) -> E {
+    use base64::Engine;
+    for l in &meta.logs {
+        if let Some(b64) = l.strip_prefix("Program data: ") {
+            let bytes = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+            if bytes.starts_with(E::DISCRIMINATOR) {
+                return E::deserialize(&mut &bytes[E::DISCRIMINATOR.len()..]).unwrap();
+            }
+        }
+    }
+    panic!("event not found in logs:\n{}", meta.logs.join("\n"));
 }

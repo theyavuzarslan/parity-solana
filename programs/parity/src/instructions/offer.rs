@@ -56,6 +56,24 @@ pub fn offer_margin(capacity_usd: u64, im_bps: u16, spread_bps: u16, maker_fee_s
         .ok_or_else(|| error!(ParityError::MathOverflow))
 }
 
+#[event]
+pub struct OfferCreated {
+    pub offer: Pubkey,
+    pub maker: Pubkey,
+    pub market_id: u16,
+    pub mint: Pubkey,
+    pub maker_side: Side,
+    pub spread_bps: u16,
+    pub capacity_usd: u64,
+    pub margin_locked: u64,
+}
+
+#[event]
+pub struct OfferCancelled {
+    pub offer: Pubkey,
+    pub refunded: u64,
+}
+
 // ----------------------------------------------------------------------------- create_offer
 
 #[derive(Accounts)]
@@ -139,6 +157,16 @@ pub fn handle_create_offer(
         active: true,
         bump: ctx.bumps.offer,
     });
+    emit!(OfferCreated {
+        offer: offer.key(),
+        maker: offer.maker,
+        market_id,
+        mint: offer.mint,
+        maker_side,
+        spread_bps,
+        capacity_usd,
+        margin_locked: margin,
+    });
     Ok(())
 }
 
@@ -189,5 +217,6 @@ pub fn handle_cancel_offer(ctx: Context<CancelOffer>) -> Result<()> {
     let offer = &mut ctx.accounts.offer;
     offer.margin_locked = 0;
     offer.active = false;
+    emit!(OfferCancelled { offer: offer.key(), refunded: amount });
     Ok(())
 }
