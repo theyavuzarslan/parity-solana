@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
-import { MARKETS, marketConfig } from "@/data/markets";
+import { useState, type ReactNode } from "react";
+import { MARKETS } from "@/data/markets";
 import { useParity, useParityQuery } from "@/data/provider";
 import type { DispatchEntry, MarketId, Rate, RateCode } from "@/data/types";
 import { cx, fmtNum, fmtPrice } from "@/lib/format";
@@ -176,14 +176,13 @@ function RateTable({ rates, onSet, busy }: { rates: Rate[]; onSet: (c: RateCode,
       <div className="t-label hidden grid-cols-[4rem_1fr_5rem_auto] gap-3 px-3 py-2 text-xs text-navy-2 sm:grid">
         <span>Code</span><span>Annual rate</span><span>Basis</span><span className="sr-only">Action</span>
       </div>
-      {rates.map((r) => <RateRow key={r.code} r={r} onSet={onSet} busy={busy === `rate-${r.code}`} />)}
+      {rates.map((r) => <RateRow key={`${r.code}-${r.ratePct}`} r={r} onSet={onSet} busy={busy === `rate-${r.code}`} />)}
     </div>
   );
 }
 
 function RateRow({ r, onSet, busy }: { r: Rate; onSet: (c: RateCode, v: number) => void; busy: boolean }) {
   const [v, setV] = useState(String(r.ratePct));
-  useEffect(() => setV(String(r.ratePct)), [r.ratePct]);
   const n = Number(v);
   const valid = v.trim() !== "" && Number.isFinite(n) && n >= -5 && n <= 200;
   const dirty = valid && n !== r.ratePct;

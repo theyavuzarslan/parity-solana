@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type { Risk } from "advisor";
 import { useParity, useParityQuery } from "@/data/provider";
 import { marketConfig } from "@/data/markets";
@@ -53,13 +53,10 @@ export function AdvisorDesk() {
   const quote = markets.value?.find((m) => m.id === pair.market);
 
   const monthlyOk = Number.isFinite(monthly) && monthly >= 10 && monthly <= 1_000_000;
-  const advice = useMemo(
-    () =>
-      quote && rates.value && monthlyOk
-        ? advise({ quote, rates: rates.value, direction: pair.direction, monthlyUsd: monthly, months, risk, override: fullOverride ? 1 : null })
-        : null,
-    [quote, rates.value, pair.direction, monthly, months, risk, fullOverride, monthlyOk],
-  );
+  const advice =
+    quote && rates.value && monthlyOk
+      ? advise({ quote, rates: rates.value, direction: pair.direction, monthlyUsd: monthly, months, risk, override: fullOverride ? 1 : null })
+      : null;
 
   const req: LadderRequest | null = advice
     ? { market: pair.market, side: sideOf(pair.direction), mint, rungs: advice.rungs.map((r) => ({ month: r.month, tenorDays: r.tenorDays, amount: r.amount })) }
@@ -149,7 +146,6 @@ export function AdvisorDesk() {
           <Segmented label="Risk preference" value={risk} onChange={(v) => { setRisk(v); reset(); }} size="sm" options={RISKS} />
 
           <LockBlock
-            quote={quote}
             lq={lq}
             preflight={pf.value ?? null}
             lock={lock}
@@ -263,9 +259,9 @@ function Ladder({ lq, lock }: { lq: LadderQuote | null; lock: LockState }) {
 /* ---------------------------------------------------------------- */
 
 function LockBlock({
-  quote, lq, preflight, lock, advice, fullOverride, onOverride, onLock, mint,
+  lq, preflight, lock, advice, fullOverride, onOverride, onLock, mint,
 }: {
-  quote?: MarketQuote; lq: LadderQuote | null; preflight: Preflight | null; lock: LockState; advice: Advice | null;
+  lq: LadderQuote | null; preflight: Preflight | null; lock: LockState; advice: Advice | null;
   fullOverride: boolean; onOverride: (v: boolean) => void; onLock: () => void; mint: Mint;
 }) {
   const { data } = useParity();
@@ -307,8 +303,8 @@ function LockBlock({
         );
       case "market-closed":
         return (
-          <Notice title="Market closed — FX reopens Sunday 22:00 UTC">
-            <p>{quote?.status === "STALE" ? "No live price is reachable, so nothing can be locked." : "The last price is older than 120 seconds. Positions are not marked or opened on stale prices."} Demo mode in Dispatch lets you rehearse.</p>
+          <Notice title={preflight.status === "STALE" ? "No live price — locking paused" : "Market closed — FX reopens Sunday 22:00 UTC"}>
+            <p>{preflight.status === "STALE" ? "The price feed is unreachable, so nothing can be opened on a stale number." : "The last price is older than 120 seconds. Positions are not opened or marked on stale prices."} Demo mode in Dispatch lets you rehearse.</p>
           </Notice>
         );
       case "no-offer":

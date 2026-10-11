@@ -76,7 +76,7 @@ export function Coupon(p: CouponProps) {
                 {p.status ? <Stamp kind={p.status} pct={p.partialPct} size="md" className="ml-2" /> : null}
               </div>
             </div>
-            <div className="text-right">
+            <div className="ml-auto text-right">
               <span className="t-label block text-xs text-navy-2">{lockedLabel}</span>
               <Num className={cx("font-semibold", p.compact ? "text-2xl" : "text-2xl @md:text-3xl", voided && "line-through decoration-red decoration-2 opacity-70")}>{fmtCcy(p.lockedAmount, m.quote, m.quote === "USD" ? 2 : 0)}</Num>
             </div>

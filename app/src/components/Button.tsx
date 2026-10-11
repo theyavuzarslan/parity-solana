@@ -51,7 +51,6 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         id={id}
         aria-busy={loading || undefined}
         aria-describedby={errId}
-        aria-invalid={error ? true : undefined}
         disabled={(disabled || loading) && !success}
         aria-disabled={success ? true : undefined}
         className={cx(

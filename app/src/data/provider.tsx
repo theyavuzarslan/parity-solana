@@ -52,8 +52,6 @@ export function useParityQuery<T>(load: (d: ParityData) => Promise<T>, deps: unk
   const { data, version } = useParity();
   const [state, setState] = useState<{ value: T | undefined; error: string | null; loading: boolean }>({ value: undefined, error: null, loading: true });
   const [tick, setTick] = useState(0);
-  const loadRef = useRef(load);
-  loadRef.current = load;
 
   useEffect(() => {
     if (!pollMs) return;
@@ -63,8 +61,7 @@ export function useParityQuery<T>(load: (d: ParityData) => Promise<T>, deps: unk
 
   useEffect(() => {
     let alive = true;
-    loadRef
-      .current(data)
+    load(data)
       .then((value) => alive && setState({ value, error: null, loading: false }))
       .catch((e: unknown) => alive && setState((s) => ({ ...s, error: e instanceof Error ? e.message : String(e), loading: false })));
     return () => {
