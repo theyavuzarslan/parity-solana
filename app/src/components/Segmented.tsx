@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, type KeyboardEvent } from "react";
+import { useId, useRef, type KeyboardEvent } from "react";
 import { cx } from "@/lib/format";
 
 export interface SegOption<T extends string> {
@@ -18,6 +18,7 @@ export function Segmented<T extends string>({
   label, options, value, onChange, size = "md", className, hideLabel,
 }: { label: string; options: SegOption<T>[]; value: T; onChange: (v: T) => void; size?: "sm" | "md"; className?: string; hideLabel?: boolean }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const labelId = useId();
   const enabled = options.filter((o) => !o.disabled);
   const move = (dir: 1 | -1) => {
     const i = enabled.findIndex((o) => o.value === value);
@@ -31,8 +32,8 @@ export function Segmented<T extends string>({
   };
   return (
     <div className={cx("min-w-0", className)}>
-      <span id={`seg-${label}`} className={cx("t-label mb-1.5 block text-xs text-navy", hideLabel && "sr-only")}>{label}</span>
-      <div role="radiogroup" aria-labelledby={`seg-${label}`} onKeyDown={onKey} className="flex w-full rounded-[4px] border-2 border-navy bg-coupon p-0.5">
+      <span id={labelId} className={cx("t-label mb-1.5 block text-xs text-navy", hideLabel && "sr-only")}>{label}</span>
+      <div role="radiogroup" aria-labelledby={labelId} onKeyDown={onKey} className="flex w-full rounded-[4px] border-2 border-navy bg-coupon p-0.5">
         {options.map((o, i) => {
           const on = o.value === value;
           return (

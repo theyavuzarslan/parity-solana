@@ -194,3 +194,15 @@ input[type="number"] {
     mask-image: none;
   }
 }
+
+/* Reduced motion: no scale or slide feedback, opacity changes only. */
+@media (prefers-reduced-motion: reduce) {
+  button:active,
+  a:active,
+  [role="radio"]:active {
+    transform: none !important;
+  }
+  [role="meter"] > div {
+    transition: none !important;
+  }
+}

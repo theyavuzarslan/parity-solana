@@ -40,7 +40,7 @@ export const PERSONAS: Persona[] = [
     blurb: "You hold lira and owe suppliers in dollars or yuan. Lock what each payment will cost.",
     pairs: [
       { market: "USD/TRY", direction: "buy", label: "USD/TRY · buy USD", plain: "You buy dollars forward and lock the lira you will pay." },
-      { market: "USD/CNH", direction: "sell", label: "USD/CNH · buy CNH", plain: "You hold dollars and owe yuan: sell dollars forward for yuan." },
+      { market: "USD/CNH", direction: "sell", label: "USD/CNH · buy CNH", plain: "The yuan leg of a lira payment: sell dollars forward for yuan, paired with a USD/TRY buy for the dollars." },
     ],
   },
   {
