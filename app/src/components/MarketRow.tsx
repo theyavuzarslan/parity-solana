@@ -4,7 +4,7 @@ import { cx, fmtPct, fmtPrice } from "@/lib/format";
 import { STATUS_NOTE, StatusChip } from "./StatusChip";
 
 function Cell({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <td className={cx("px-3 py-3 text-right align-middle", className)}>{children}</td>;
+  return <td className={cx("px-2 py-3 text-right align-middle lg:px-3", className)}>{children}</td>;
 }
 
 /** One row of the live status board (desktop / tablet table). */
@@ -13,8 +13,8 @@ export function MarketRow({ q }: { q: MarketQuote }) {
   const note = STATUS_NOTE[q.status];
   const dim = q.status !== "OPEN";
   return (
-    <tr className="border-t border-hairline">
-      <th scope="row" className="px-3 py-3 text-left align-middle">
+    <tr className="border-t border-hairline text-sm lg:text-base">
+      <th scope="row" className="px-2 py-3 text-left align-middle lg:px-3">
         <span className="t-label block text-base text-navy">{q.id}</span>
         <span className="block text-xs text-navy-2">{marketConfig(q.id).label}</span>
       </th>
@@ -24,7 +24,7 @@ export function MarketRow({ q }: { q: MarketQuote }) {
       <Cell><span className="t-num text-navy">{fmtPrice(q.forwards[180], dp)}</span></Cell>
       <Cell><span className="t-num text-navy">{fmtPct(q.carryPct, 2, true)}</span></Cell>
       <Cell><span className="t-num text-navy">{q.bestSpreadBps === null ? "—" : `${q.bestSpreadBps} bps`}</span></Cell>
-      <td className="px-3 py-3 text-left align-middle">
+      <td className="px-2 py-3 text-left align-middle lg:px-3">
         <span className="flex flex-col items-start gap-1">
           <StatusChip status={q.status} />
           {note ? <span className="text-xs text-navy-2">{note}</span> : null}

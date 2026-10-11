@@ -38,8 +38,8 @@ export function WalletView() {
           </div>
           <div className="text-right">
             <span className="t-label block text-xs text-navy-2">Open marked PnL</span>
-            <Num className="text-2xl">{pnl.text}</Num>
-            <span className="t-label ml-2 text-sm text-navy-2">{pnl.word}</span>
+            <Num className="text-2xl">{positions.value ? pnl.text : "—"}</Num>
+            {positions.value ? <span className="t-label ml-2 text-sm text-navy-2">{pnl.word}</span> : null}
           </div>
         </div>
 

@@ -17,6 +17,7 @@ const DAY = 86_400;
 const TENORS: Tenor[] = [30, 90, 180];
 const LIVE_TTL_SECS = 30;
 export const FAUCET_AMOUNT = 1_000;
+const LIQ_CONFIRM_MARKS = 3;
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const ceil2 = (n: number) => Math.ceil(n * 100 - 1e-9) / 100;
@@ -76,7 +77,7 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
   };
   let log: DispatchEntry[] = [];
   let positions: InternalPosition[] | null = null;
-  let counter = 6;
+  let counter = 5;
 
   const nowSec = () => Math.floor(realNow() / 1000) + demo.clockOffsetDays * DAY;
 
@@ -149,10 +150,13 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
   }
 
   // ---------- Positions ----------
+  /** Unshocked spot, so demo history never depends on when Dispatch was used. */
+  const baseSpot = (id: MarketId) => marketConfig(id).compose(feedSpots().spots);
+
   function seedPositions(): InternalPosition[] {
     const t0 = nowSec();
-    const usdtry = quoteFor("USD/TRY").spot;
-    const eurtry = quoteFor("EUR/TRY").spot;
+    const usdtry = baseSpot("USD/TRY");
+    const eurtry = baseSpot("EUR/TRY");
     const mk = (p: Partial<InternalPosition> & Pick<InternalPosition, "market" | "side" | "notionalUsd" | "strike" | "tenorDays" | "status">, ageDays: number, no: string): InternalPosition => {
       const m = marketConfig(p.market);
       const im = round2(p.notionalUsd * m.im);
@@ -175,7 +179,7 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
     const f2 = fwd("EUR/TRY", eurtry, 40);
     p2.strike = f2 - (120 * eurtry) / p2.quantity;
     // 3 · PARTIAL 30%: importer long USD/CNH, 30% closed by the crank, rest still under water.
-    const cnh = quoteFor("USD/CNH").spot;
+    const cnh = baseSpot("USD/CNH");
     const p3 = withQty(mk({ market: "USD/CNH", side: "long", notionalUsd: 1_400, tenorDays: 90, status: "PartiallyLiquidated", closedFraction: 0.3, strike: 0, mint: "USDG" }, 45, "0003"), cnh);
     p3.imUsd = round2(p3.notionalUsd * 0.03);
     p3.marginUsd = round2(p3.imUsd * 0.62);
@@ -264,6 +268,8 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
   }
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  positions = seedPositions();
 
   const provider: ParityData & { _debug: () => unknown } = {
     async getMarkets() {
@@ -378,15 +384,18 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
           else if (eq < PROTOCOL.callEquity * p.imUsd) { p.breachCount = 0; called += 1; if (p.status === "Open") p.status = "Called"; }
           else { p.breachCount = 0; healthy += 1; if (p.status === "Called") p.status = "Open"; }
         }
-        return done(entry("MARK NOW", `${healthy} healthy · ${called} on call · ${breached} below 20% (breach counted)`));
+        const maxBreach = Math.max(0, ...ensurePositions().map((p) => p.breachCount));
+        return done(entry("MARK NOW", `${healthy} healthy · ${called} on call · ${breached} below 20%${breached ? ` (fresh mark ${Math.min(maxBreach, LIQ_CONFIRM_MARKS)}/${LIQ_CONFIRM_MARKS})` : ""}`));
       },
       async liquidate() {
-        let partial = 0, full = 0;
+        let partial = 0, full = 0, waiting = 0;
         for (const p of ensurePositions()) {
           if (p.status === "Settled" || p.status === "Liquidated") continue;
           const pres = present(p);
           const eq = p.marginUsd + pres.pnlUsd;
           if (eq >= PROTOCOL.liqEquity * p.imUsd) continue;
+          if (p.breachCount < LIQ_CONFIRM_MARKS) { waiting += 1; continue; }
+          p.breachCount = 0;
           // close 30%: realise 30% of PnL, scale size and IM to 70%
           const realised = pres.pnlUsd * PROTOCOL.partialLiq;
           const penalty = (p.notionalUsd * PROTOCOL.partialLiq * PROTOCOL.liqPenaltyBps) / 10_000;
@@ -412,7 +421,12 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
             partial += 1;
           }
         }
-        return done(entry("LIQUIDATE", partial + full === 0 ? "Nothing below the 20% line." : `${partial} partial (30%) · ${full} closed in full`));
+        const parts = [
+          partial ? `${partial} partial (30%)` : "",
+          full ? `${full} closed in full → waterfall` : "",
+          waiting ? `${waiting} below 20% awaiting ${LIQ_CONFIRM_MARKS} fresh marks` : "",
+        ].filter(Boolean);
+        return done(entry("LIQUIDATE", parts.length ? parts.join(" · ") : "Nothing below the 20% line."));
       },
       async settle() {
         let n = 0;

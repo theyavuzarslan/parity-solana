@@ -37,7 +37,8 @@ export interface CouponProps {
 export function Coupon(p: CouponProps) {
   const m = marketConfig(p.market);
   const [from, to] = routeOf(p.market, p.side);
-  const lockedLabel = p.side === "short" ? `YOU RECEIVE ${m.quote}` : `YOU PAY ${m.quote}`;
+  const voided = p.status === "VOID";
+  const lockedLabel = voided ? `LOCK VOIDED · ${m.quote}` : p.status === "SETTLED" ? `${p.side === "short" ? "RECEIVED" : "PAID"} ${m.quote}` : p.side === "short" ? `YOU RECEIVE ${m.quote}` : `YOU PAY ${m.quote}`;
   return (
     <article
       className={cx("coupon @container", p.className)}
@@ -59,37 +60,34 @@ export function Coupon(p: CouponProps) {
       {/* Body + stub */}
       <div className="relative flex flex-col @lg:flex-row">
         <div className={cx("relative min-w-0 flex-1 px-4 @md:px-5", p.compact ? "py-3" : "py-4")}>
-          <div className="t-display flex items-center gap-3 text-[2rem] text-navy @md:text-[2.5rem]">
-            <span>{from}</span>
-            <span aria-hidden className="flex flex-1 items-center gap-2 text-red">
-              <span className="h-0 flex-1 border-t-2 border-dashed border-navy/40" />
-              <span className="text-2xl">→</span>
-              <span className="h-0 flex-1 border-t-2 border-dashed border-navy/40" />
-            </span>
-            <span>{to}</span>
-          </div>
-          <div className="mt-2 flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
-            <div>
-              <span className="t-label block text-xs text-navy-2">SETTLES</span>
-              <span className="t-num text-base text-navy">{fmtDate(p.maturity)}</span>
+          <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+            <div className="min-w-0">
+              <div className={cx("t-display flex items-center gap-3 text-navy", p.compact ? "text-[2rem]" : "text-[2rem] @md:text-[2.5rem]")}>
+                <span>{from}</span>
+                <span aria-hidden className="flex w-14 items-center gap-1.5 text-red @md:w-20">
+                  <span className="h-0 flex-1 border-t-2 border-dashed border-navy/40" />
+                  <span className="text-xl leading-none">→</span>
+                </span>
+                <span>{to}</span>
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-2">
+                <span className="t-label text-xs text-navy-2">{p.status === "SETTLED" ? "SETTLED" : "SETTLES"}</span>
+                <span className="t-num text-sm text-navy">{fmtDate(p.maturity)}</span>
+                {p.status ? <Stamp kind={p.status} pct={p.partialPct} size="md" className="ml-2" /> : null}
+              </div>
             </div>
             <div className="text-right">
               <span className="t-label block text-xs text-navy-2">{lockedLabel}</span>
-              <Num className="text-2xl font-semibold @md:text-3xl">{fmtCcy(p.lockedAmount, m.quote, m.quote === "USD" ? 2 : 0)}</Num>
+              <Num className={cx("font-semibold", p.compact ? "text-2xl" : "text-2xl @md:text-3xl", voided && "line-through decoration-red decoration-2 opacity-70")}>{fmtCcy(p.lockedAmount, m.quote, m.quote === "USD" ? 2 : 0)}</Num>
             </div>
           </div>
-          {p.status ? (
-            <div className="pointer-events-none absolute right-4 top-2 z-10 @lg:right-6">
-              <Stamp kind={p.status} pct={p.partialPct} size="md" />
-            </div>
-          ) : null}
         </div>
         {/* perforation */}
         <div className="relative perf-x @lg:perf-y" aria-hidden>
           <span className="coupon-notch hidden @lg:block" data-edge="top" style={{ left: 0 }} />
           <span className="coupon-notch hidden @lg:block" data-edge="bottom" style={{ left: 0 }} />
         </div>
-        <dl className="grid grid-cols-3 gap-3 px-4 py-3 @lg:w-40 @lg:grid-cols-1 @lg:gap-2 @lg:px-4">
+        <dl className="grid grid-cols-3 content-center gap-x-3 gap-y-1.5 px-4 py-3 @lg:w-44 @lg:grid-cols-2 @lg:px-4">
           <div>
             <dt className="t-label text-xs text-navy-2">NO.</dt>
             <dd className="t-num text-sm text-navy">{p.no ?? "—"}</dd>
@@ -98,11 +96,11 @@ export function Coupon(p: CouponProps) {
             <dt className="t-label text-xs text-navy-2">MARGIN IN</dt>
             <dd className="t-label text-sm text-navy">{p.mint}</dd>
           </div>
-          <div>
+          <div className="@lg:col-span-2">
             <dt className="t-label text-xs text-navy-2">NOTIONAL</dt>
             <dd className="t-num text-sm text-carbon">{fmtUsd(p.notionalUsd, 0)}</dd>
           </div>
-          {p.tag ? <dd className="t-label col-span-3 text-xs text-navy-2 @lg:col-span-1">{p.tag}</dd> : null}
+          {p.tag ? <dd className="t-label col-span-3 text-xs text-navy-2 @lg:col-span-2">{p.tag}</dd> : null}
         </dl>
       </div>
       {p.children ? <div className="border-t border-hairline px-4 py-3 @md:px-5">{p.children}</div> : null}

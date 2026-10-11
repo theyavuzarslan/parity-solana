@@ -95,10 +95,10 @@ export function AdvisorDesk() {
     <div className="grid grid-cols-1 gap-x-8 gap-y-10 lg:grid-cols-12">
       {/* LEFT — booking desk inputs */}
       <section aria-labelledby="desk-t" className="min-w-0 lg:col-span-4 xl:col-span-3">
-        <h1 id="desk-t" className="t-display text-3xl text-navy md:text-[2.5rem]">Booking desk</h1>
-        <p className="mt-2 max-w-prose text-navy-2">Tell the Advisor what you earn or owe. It sizes a ladder of forwards you can lock in one signature.</p>
+        <h1 id="desk-t" className="t-display text-3xl text-navy">Booking desk</h1>
+        <p className="mt-1.5 max-w-prose text-sm text-navy-2">Tell the Advisor what you earn or owe; it sizes a ladder you lock in one signature.</p>
 
-        <div className="mt-6 space-y-5">
+        <div className="mt-5 space-y-4">
           <Segmented
             label="Who is hedging"
             size="sm"
@@ -106,13 +106,11 @@ export function AdvisorDesk() {
             onChange={choosePersona}
             options={PERSONAS.map((p) => ({ value: p.id, label: p.tab }))}
           />
-          <div className="rounded-[4px] border border-hairline bg-coupon px-3 py-2.5">
-            <p className="t-label text-sm text-navy">
-              {persona.title}
-              {persona.proposed ? <span className="ml-2 rounded-[3px] border-[1.5px] border-warn px-1.5 py-0.5 text-xs">PROPOSED</span> : null}
-            </p>
-            <p className="mt-1 text-sm text-navy-2">{persona.blurb}</p>
-          </div>
+          <p className="text-sm text-navy-2">
+            <span className="t-label mr-1.5 text-navy">{persona.title}.</span>
+            {persona.proposed ? <span className="t-label mr-1.5 rounded-[3px] border-[1.5px] border-warn px-1.5 py-px text-xs text-navy">PROPOSED</span> : null}
+            {persona.blurb}
+          </p>
 
           {persona.pairs.length > 1 ? (
             <Segmented
@@ -123,12 +121,11 @@ export function AdvisorDesk() {
               options={persona.pairs.map((p, i) => ({ value: String(i), label: p.label }))}
             />
           ) : (
-            <div>
-              <span className="t-label mb-1.5 block text-xs text-navy">Pair</span>
-              <p className="t-label text-base text-navy">{pair.label}</p>
+            <div className="flex items-baseline justify-between gap-3 border-y border-hairline py-2">
+              <span className="t-label text-xs text-navy">Pair</span>
+              <span className="t-label text-base text-navy">{pair.label}</span>
             </div>
           )}
-          <p className="-mt-2 text-sm text-navy-2">{pair.plain}</p>
 
           <NumberField
             label="Monthly amount (USD)"
@@ -138,7 +135,7 @@ export function AdvisorDesk() {
             step={100}
             onChange={(n) => { setMonthly(n); reset(); }}
             error={monthlyOk ? null : "Enter between $10 and $1,000,000 a month."}
-            hint={persona.id === "saver" ? "Dollar value of the gold you buy each month." : "The dollar flow you want to protect each month."}
+            hint={pair.plain}
           />
 
           <Segmented
@@ -166,7 +163,7 @@ export function AdvisorDesk() {
       </section>
 
       {/* CENTRE — the ladder as coupons */}
-      <section aria-labelledby="ladder-t" className="min-w-0 lg:col-span-8 xl:col-span-5">
+      <section aria-labelledby="ladder-t" className="min-w-0 lg:col-span-8 xl:col-span-6">
         <Panel
           id="ladder"
           title={locked ? "Your next settlements" : "Your coupon book"}
@@ -189,7 +186,7 @@ export function AdvisorDesk() {
       </section>
 
       {/* RIGHT — carbon-copy receipt */}
-      <aside className="min-w-0 lg:col-span-12 xl:col-span-4">
+      <aside className="min-w-0 lg:col-span-12 xl:col-span-3">
         <Receipt lq={lq} quote={quote} mint={mint} setMint={(m) => { setMint(m); reset(); }} />
       </aside>
 
@@ -282,7 +279,7 @@ function LockBlock({
       case "no-wallet":
         return (
           <Notice title="Connect a wallet to lock">
-            <p>The demo wallet is simulated — no extension needed tonight.</p>
+            <p>The demo wallet is simulated; no extension needed.</p>
             <Button size="sm" variant="secondary" loading={connecting} loadingLabel="Connecting…" onClick={async () => { setConnecting(true); await data.connect(); setConnecting(false); }}>
               Connect demo wallet
             </Button>
@@ -320,7 +317,7 @@ function LockBlock({
   })();
 
   return (
-    <div className="space-y-4 border-t-2 border-navy pt-5">
+    <div className="space-y-3 border-t-2 border-navy pt-4">
       {advisedBelowFull ? (
         <Segmented
           label="Hedge ratio"
@@ -363,7 +360,7 @@ function LockBlock({
 
 function Notice({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div role="status" className="space-y-2 rounded-[4px] border-2 border-navy bg-coupon px-3 py-3 text-sm text-navy-2">
+    <div role="status" className="space-y-1.5 rounded-[4px] border-2 border-navy bg-coupon px-3 py-2.5 text-sm text-navy-2">
       <p className="t-label text-sm text-navy">{title}</p>
       {children}
     </div>

@@ -32,7 +32,7 @@ export function Stamp({ kind, pct, className, size = "md", inverse }: { kind: St
         "stamp t-label inline-flex select-none items-center whitespace-nowrap rounded-[3px] font-extrabold",
         kind === "VOID" ? "border-[3px]" : "border-2",
         size === "sm" && "px-1.5 py-0.5 text-xs",
-        size === "md" && "px-2.5 py-1 text-sm",
+        size === "md" && "px-3 py-1 text-base tracking-[0.06em]",
         size === "lg" && "px-4 py-1.5 text-2xl tracking-[0.08em]",
         inverse ? "border-coupon text-coupon" : INK[kind],
         className,

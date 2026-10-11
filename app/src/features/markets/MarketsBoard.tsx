@@ -64,14 +64,19 @@ export function MarketsBoard() {
 function Board({ rows }: { rows: MarketQuote[] }) {
   return (
     <>
-      <table className="hidden w-full border-collapse border-y-2 border-navy bg-coupon md:table">
+      <table className="hidden w-full table-fixed border-collapse border-y-2 border-navy bg-coupon md:table">
+        <colgroup>
+          <col className="w-[18%]" />
+          {HEADS.map((h) => <col key={h} className="w-[11%]" />)}
+          <col className="w-[16%]" />
+        </colgroup>
         <thead>
           <tr>
-            <th scope="col" className="t-label px-3 py-2 text-left text-xs text-navy-2">Market</th>
+            <th scope="col" className="t-label px-2 py-2 text-left text-xs text-navy-2 lg:px-3">Market</th>
             {HEADS.map((h) => (
-              <th key={h} scope="col" className="t-label px-3 py-2 text-right text-xs text-navy-2">{h}</th>
+              <th key={h} scope="col" className="t-label px-2 py-2 text-right text-xs text-navy-2 lg:px-3">{h}</th>
             ))}
-            <th scope="col" className="t-label px-3 py-2 text-left text-xs text-navy-2">Status</th>
+            <th scope="col" className="t-label px-2 py-2 text-left text-xs text-navy-2 lg:px-3">Status</th>
           </tr>
         </thead>
         <tbody>

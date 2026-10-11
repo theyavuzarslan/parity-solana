@@ -52,7 +52,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         aria-busy={loading || undefined}
         aria-describedby={errId}
         aria-invalid={error ? true : undefined}
-        disabled={disabled || loading}
+        disabled={(disabled || loading) && !success}
+        aria-disabled={success ? true : undefined}
         className={cx(
           base,
           variants[variant],
@@ -61,9 +62,12 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
           error && variant !== "ghost" && "ring-2 ring-red ring-offset-2 ring-offset-stock",
           block && "w-full",
           loading && "cursor-progress",
+          success && "pointer-events-none",
+          success && variant === "primary" && "border-navy bg-navy hover:bg-navy",
           className,
         )}
         {...rest}
+        onClick={success ? undefined : rest.onClick}
       >
         {loading ? (
           <>

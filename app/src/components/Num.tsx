@@ -1,25 +1,24 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import { cx } from "@/lib/format";
 
-/** Carbon numeral. Value changes cross-fade (≤150 ms) — never count-up theatrics. */
+/**
+ * Carbon numeral. A changed value fades in over 150 ms (opacity only) — never
+ * count-up theatrics, and never two values overlapping.
+ */
 export function Num({ children, className, tone = "carbon" }: { children: string; className?: string; tone?: "carbon" | "navy" | "copy" | "red" | "inherit" }) {
+  const reduce = useReducedMotion();
   const toneCls = { carbon: "text-carbon", navy: "text-navy", copy: "text-copy-ink", red: "text-red", inherit: "" }[tone];
   return (
-    <span className={cx("t-num relative inline-grid", toneCls, className)}>
-      <AnimatePresence initial={false} mode="popLayout">
-        <motion.span
-          key={children}
-          className="col-start-1 row-start-1 whitespace-nowrap"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.15, ease: "easeOut" }}
-        >
-          {children}
-        </motion.span>
-      </AnimatePresence>
-    </span>
+    <motion.span
+      key={children}
+      className={cx("t-num inline-block whitespace-nowrap", toneCls, className)}
+      initial={{ opacity: 0.35 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: reduce ? 0.1 : 0.15, ease: "easeOut" }}
+    >
+      {children}
+    </motion.span>
   );
 }
