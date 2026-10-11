@@ -6,7 +6,7 @@ use anchor_lang::{
     prelude::Pubkey,
     solana_program::{program_pack::Pack, system_instruction},
 };
-use anchor_spl::token::spl_token;
+use anchor_spl::{token::spl_token, token_2022::spl_token_2022};
 use common::*;
 use parity::{
     math::{forward, pnl_long_usd},
@@ -116,16 +116,42 @@ fn settle_now(t: &mut T) -> TxResult {
     settle(&mut t.c, &keeper, t.position, t.pa, t.pa)
 }
 
-/// A plain (non-associated) SPL Token account for `owner`, created at a fresh keypair address.
+/// A plain (non-associated, no extensions) token account of `mint` for `owner` at a fresh
+/// keypair address (system create + InitializeAccount3), as a keeper would create one.
 fn create_token_account(c: &mut Ctx, owner: Pubkey, mint: Pubkey) -> Pubkey {
     let kp = Keypair::new();
+    let tp = c.token_program_of(mint);
     let len = spl_token::state::Account::LEN;
     let lamports = c.svm.minimum_balance_for_rent_exemption(len);
     let admin = c.admin.insecure_clone();
-    let create = system_instruction::create_account(&admin.pubkey(), &kp.pubkey(), lamports, len as u64, &TOKEN_PROGRAM);
-    let init = spl_token::instruction::initialize_account3(&TOKEN_PROGRAM, &kp.pubkey(), &mint, &owner).unwrap();
+    let create = system_instruction::create_account(&admin.pubkey(), &kp.pubkey(), lamports, len as u64, &tp);
+    let init = if tp == TOKEN_2022_PROGRAM {
+        spl_token_2022::instruction::initialize_account3(&tp, &kp.pubkey(), &mint, &owner).unwrap()
+    } else {
+        spl_token::instruction::initialize_account3(&tp, &kp.pubkey(), &mint, &owner).unwrap()
+    };
     send(c, &[create, init], &[&admin, &kp]).unwrap();
     kp.pubkey()
+}
+
+/// Reassign the owner of `owner`'s legacy SPL ATA for `mint` to `new_owner` (signed by owner).
+fn reassign_ata_owner(c: &mut Ctx, owner: &Keypair, mint: Pubkey, new_owner: Pubkey) {
+    let a = c.ata_of(owner.pubkey(), mint);
+    let i = spl_token::instruction::set_authority(
+        &TOKEN_PROGRAM,
+        &a,
+        Some(&new_owner),
+        spl_token::instruction::AuthorityType::AccountOwner,
+        &owner.pubkey(),
+        &[],
+    )
+    .unwrap();
+    send(c, &[i], &[owner]).unwrap();
+}
+
+/// Index of `account` in `i`'s account metas.
+fn idx(i: &anchor_lang::solana_program::instruction::Instruction, account: Pubkey) -> usize {
+    i.accounts.iter().position(|m| m.pubkey == account).unwrap()
 }
 
 fn bps(x: u64, b: u64) -> u64 {
@@ -427,8 +453,8 @@ fn payout_redirect_rejected() {
     let mint = t.mint;
     let attacker_ata = create_ata(&mut t.c, attacker.pubkey(), mint);
 
-    // Settle: attacker's ATA as long_ata, then swapped long/short ATAs. Anchor checks the
-    // token owner before the ATA address, so a foreign ATA fails with ConstraintTokenOwner.
+    // Settle: attacker's ATA as long_ata, then swapped long/short ATAs. Payout accounts must be
+    // owned by the respective party, so both fail with ConstraintTokenOwner.
     let (l, s) = (t.long_ata(), t.short_ata());
     let base = settle_ix(&t.c, t.position, t.pa, t.pa);
     let long_idx = base.accounts.iter().position(|m| m.pubkey == l).unwrap();
@@ -440,12 +466,6 @@ fn payout_redirect_rejected() {
     i.accounts[long_idx].pubkey = s;
     i.accounts[short_idx].pubkey = l;
     assert_error(send(&mut t.c, &[i], &[&attacker]).unwrap_err(), "ConstraintTokenOwner");
-    // A non-canonical token account that IS owned by the long fails the ATA address check.
-    let taker = t.c.taker.pubkey();
-    let side_account = create_token_account(&mut t.c, taker, mint);
-    let mut i = base.clone();
-    i.accounts[long_idx].pubkey = side_account;
-    assert_error(send(&mut t.c, &[i], &[&attacker]).unwrap_err(), "ConstraintAssociated");
     assert_eq!(t.pos().status, Status::Open);
 
     // Liquidate: attacker's ATA as short_ata.
@@ -540,13 +560,24 @@ fn token_conservation_full_lifecycle() {
 
 #[test]
 fn mark_after_demo_clock_cleared() {
-    // Ruling (c): a demo clock offset that is later reduced leaves last_publish_time in the
-    // future; mark/settle treat it as 0 instead of rejecting every fresh price.
+    // Ruling (c, refined): a demo clock offset that is later reduced leaves last_publish_time
+    // more than the oracle future-skew ahead of now; mark/liquidate/settle treat it as 0.
     let mut t = setup_position(false);
     set_demo_mode(&mut t.c, true).unwrap();
     set_demo_price(&mut t.c, 0, 4_100_000_000, 0, true).unwrap();
-    set_demo_clock(&mut t.c, 1_000).unwrap();
     let keeper = t.keeper.insecure_clone();
+
+    // Within the oracle future-skew (5s) the last publish time is kept: still monotonic.
+    set_demo_clock(&mut t.c, 3).unwrap();
+    advance_time(&mut t.c, 1);
+    mark_as(&mut t.c, &keeper, t.position, t.pa, t.pa).unwrap();
+    assert_eq!(t.pos().last_publish_time, t.c.now() + 3);
+    set_demo_clock(&mut t.c, 0).unwrap();
+    advance_time(&mut t.c, 1);
+    assert_error(mark_as(&mut t.c, &keeper, t.position, t.pa, t.pa).unwrap_err(), "StalePublishTime");
+
+    // Beyond the skew window it is floored to 0.
+    set_demo_clock(&mut t.c, 1_000).unwrap();
     advance_time(&mut t.c, 1);
     mark_as(&mut t.c, &keeper, t.position, t.pa, t.pa).unwrap();
     assert_eq!(t.pos().last_publish_time, t.c.now() + 1_000);
@@ -569,4 +600,145 @@ fn mark_after_demo_clock_cleared() {
     advance_time(&mut t.c, 1);
     settle_now(&mut t).unwrap();
     assert_eq!(t.pos().status, Status::Settled);
+}
+
+#[test]
+fn owner_reassigned_ata_cannot_block_settle() {
+    let mut t = setup_position(false);
+    let p = t.pos();
+    warp_time(&mut t.c, p.maturity);
+    let price = 4_300_000;
+    write_px(&mut t.c, t.pa, price);
+    let pnl = expected_pnl(&t.c, &p, price);
+    // The long (loser) hands its canonical ATA to someone else to block settlement.
+    let (taker, mint) = (t.c.taker.insecure_clone(), t.mint);
+    let accomplice = Keypair::new().pubkey();
+    let canonical = t.long_ata();
+    reassign_ata_owner(&mut t.c, &taker, mint, accomplice);
+    assert_error(settle_now(&mut t).unwrap_err(), "ConstraintTokenOwner");
+    // Anyone settles into a fresh account owned by the long.
+    let fresh = create_token_account(&mut t.c, taker.pubkey(), mint);
+    let mut i = settle_ix(&t.c, t.position, t.pa, t.pa);
+    let li = idx(&i, canonical);
+    i.accounts[li].pubkey = fresh;
+    let keeper = t.keeper.insecure_clone();
+    send(&mut t.c, &[i], &[&keeper]).unwrap();
+    assert_eq!(t.c.balance(fresh), (IM as i128 + pnl) as u64);
+    assert_eq!(t.pos().status, Status::Settled);
+}
+
+#[test]
+fn owner_reassigned_ata_cannot_block_liquidate() {
+    let mut t = setup_position(false);
+    let total0 = t.total();
+    let price = price_for_long_loss(&t.c, &t.pos(), 900 * ONE); // falls through to full close
+    confirm_breaches(&mut t, price, 3);
+    // The short (winner) reassigns its ATA; the long (loser) reassigns too.
+    let (maker, taker, mint) = (t.c.maker.insecure_clone(), t.c.taker.insecure_clone(), t.mint);
+    let (long_canon, short_canon) = (t.long_ata(), t.short_ata());
+    reassign_ata_owner(&mut t.c, &maker, mint, Keypair::new().pubkey());
+    reassign_ata_owner(&mut t.c, &taker, mint, Keypair::new().pubkey());
+    assert_error(liq(&mut t).unwrap_err(), "ConstraintTokenOwner");
+    let fresh_long = create_token_account(&mut t.c, taker.pubkey(), mint);
+    let fresh_short = create_token_account(&mut t.c, maker.pubkey(), mint);
+    let keeper = t.keeper.insecure_clone();
+    let keeper_ata = t.keeper_ata();
+    let mut i = liquidate_ix(&t.c, keeper.pubkey(), keeper_ata, t.position, t.pa, t.pa);
+    let (li, si) = (idx(&i, long_canon), idx(&i, short_canon));
+    i.accounts[li].pubkey = fresh_long;
+    i.accounts[si].pubkey = fresh_short;
+    let meta = send(&mut t.c, &[i], &[&keeper]).unwrap();
+    let _: PartiallyLiquidated = event(&meta);
+    let _: Liquidated = event(&meta);
+    assert_eq!(t.pos().status, Status::Liquidated);
+    assert!(t.c.balance(fresh_short) > IM);
+    assert!(t.c.balance(fresh_long) > 0);
+    // Payouts landed in the fresh accounts; nothing was created or lost.
+    assert_eq!(t.total() + t.c.balance(fresh_long) + t.c.balance(fresh_short), total0);
+}
+
+#[test]
+fn token2022_payout_extensions_rejected() {
+    use spl_token_2022::extension::{cpi_guard, memo_transfer, ExtensionType};
+    let mut t = setup_position(true);
+    let p = t.pos();
+    warp_time(&mut t.c, p.maturity);
+    write_px(&mut t.c, t.pa, P_42);
+    let (maker, taker, mint) = (t.c.maker.insecure_clone(), t.c.taker.insecure_clone(), t.mint);
+    let (long_canon, short_canon) = (t.long_ata(), t.short_ata());
+    // Long requires incoming memos; short enables CPI Guard on its ATA.
+    let tp = TOKEN_2022_PROGRAM;
+    let memo = [
+        spl_token_2022::instruction::reallocate(&tp, &long_canon, &taker.pubkey(), &taker.pubkey(), &[], &[ExtensionType::MemoTransfer]).unwrap(),
+        memo_transfer::instruction::enable_required_transfer_memos(&tp, &long_canon, &taker.pubkey(), &[]).unwrap(),
+    ];
+    send(&mut t.c, &memo, &[&taker]).unwrap();
+    let guard = [
+        spl_token_2022::instruction::reallocate(&tp, &short_canon, &maker.pubkey(), &maker.pubkey(), &[], &[ExtensionType::CpiGuard]).unwrap(),
+        cpi_guard::instruction::enable_cpi_guard(&tp, &short_canon, &maker.pubkey(), &[]).unwrap(),
+    ];
+    send(&mut t.c, &guard, &[&maker]).unwrap();
+
+    assert_error(settle_now(&mut t).unwrap_err(), "PayoutAccountUnsupported");
+    let fresh_long = create_token_account(&mut t.c, taker.pubkey(), mint);
+    let base = settle_ix(&t.c, t.position, t.pa, t.pa);
+    let (li, si) = (idx(&base, long_canon), idx(&base, short_canon));
+    let keeper = t.keeper.insecure_clone();
+    let mut i = base.clone();
+    i.accounts[li].pubkey = fresh_long;
+    assert_error(send(&mut t.c, &[i], &[&keeper]).unwrap_err(), "PayoutAccountUnsupported");
+    let fresh_short = create_token_account(&mut t.c, maker.pubkey(), mint);
+    let mut i = base.clone();
+    i.accounts[li].pubkey = fresh_long;
+    i.accounts[si].pubkey = fresh_short;
+    send(&mut t.c, &[i], &[&keeper]).unwrap();
+    assert_eq!(t.pos().status, Status::Settled);
+    assert_eq!(t.c.balance(fresh_long) + t.c.balance(fresh_short), 2 * IM);
+}
+
+#[test]
+fn liquidate_after_maturity_rejected() {
+    let mut t = setup_position(false);
+    let price = partial_price(&t);
+    confirm_breaches(&mut t, price, 3);
+    let maturity = t.pos().maturity;
+    warp_time(&mut t.c, maturity);
+    write_px(&mut t.c, t.pa, price);
+    assert_error(liq(&mut t).unwrap_err(), "NotLiquidatable");
+    settle_now(&mut t).unwrap();
+    assert_eq!(t.pos().status, Status::Settled);
+}
+
+#[test]
+fn partial_insurance_tops_up_winner() {
+    let mut t = setup_position(false);
+    let (admin, mint) = (t.c.admin.pubkey(), t.mint);
+    mint_to(&mut t.c, mint, admin, 5_000 * ONE).unwrap();
+    fund_insurance(&mut t.c, mint, 5_000 * ONE).unwrap();
+    let total0 = t.total();
+    let p0 = t.pos();
+    // Gap to 30: 30% of the loss alone exceeds the loser's whole margin.
+    confirm_breaches(&mut t, P_30, 3);
+    let pnl = expected_pnl(&t.c, &p0, P_30);
+    let realized = bps(pnl.unsigned_abs() as u64, 3000);
+    assert!(realized > IM, "realized {realized}");
+    let (vault0, ins0, long0, short0) = (t.vault(), t.insurance(), t.c.balance(t.long_ata()), t.c.balance(t.short_ata()));
+
+    let meta = liq(&mut t).unwrap();
+    let part: PartiallyLiquidated = event(&meta);
+    let from_ins1 = realized - IM;
+    assert_eq!((part.realized, part.from_insurance, part.shortfall), (realized, from_ins1, 0));
+    assert_eq!((part.penalty, part.reward), (0, 0)); // loser margin exhausted by the loss
+    // Loser equity is negative after the partial → full close in the same instruction.
+    let full: Liquidated = event(&meta);
+    let reduced = Position { qty: bps(p0.qty, 7000), ..p0.clone() };
+    let owed2 = expected_pnl(&t.c, &reduced, P_30).unsigned_abs() as u64;
+    assert_eq!((full.from_loser, full.from_insurance, full.shortfall), (0, owed2, 0));
+    // Winner margin after the partial = IM + from_loser (IM) + from_insurance; paid from the vault
+    // (which first received from_insurance from the insurance fund), plus the full-close draw.
+    assert_eq!(t.c.balance(t.short_ata()), short0 + IM + IM + from_ins1 + owed2);
+    assert_eq!(t.vault(), vault0 - 2 * IM);
+    assert_eq!(t.insurance(), ins0 - from_ins1 - owed2);
+    assert_eq!(t.c.balance(t.long_ata()), long0);
+    assert_eq!(t.total(), total0);
 }

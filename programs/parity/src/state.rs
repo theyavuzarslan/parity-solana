@@ -77,11 +77,13 @@ pub fn effective_now(config: &Config) -> Result<i64> {
         .ok_or_else(|| error!(ParityError::MathOverflow))
 }
 
-/// A position's last accepted `publish_time`, or 0 when it lies in the future. A demo clock
-/// offset that is later reduced can leave it ahead of `now`; treating it as 0 lets the position
-/// be marked, liquidated or settled again instead of being stuck until real time catches up.
+/// A position's last accepted `publish_time`, or 0 when it lies further in the future than the
+/// oracle's future-skew tolerance (`oracle::MAX_FUTURE_SKEW_SECS`). A demo clock offset that is
+/// later reduced can leave it far ahead of `now`; treating it as 0 lets the position be marked,
+/// liquidated or settled again instead of being stuck until real time catches up. Within the
+/// skew window it is kept, so a legitimately future-dated Pyth price stays monotonic.
 pub fn last_publish_floor(last_publish_time: i64, now: i64) -> i64 {
-    if last_publish_time > now { 0 } else { last_publish_time }
+    if last_publish_time > now.saturating_add(crate::oracle::MAX_FUTURE_SKEW_SECS) { 0 } else { last_publish_time }
 }
 
 #[account]

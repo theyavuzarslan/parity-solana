@@ -44,4 +44,6 @@ pub enum ParityError {
     InvalidParams,
     #[msg("Margin too low")]
     MarginTooLow,
+    #[msg("Payout token account has RequiredMemoTransfers or CpiGuard enabled")]
+    PayoutAccountUnsupported,
 }

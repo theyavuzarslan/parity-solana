@@ -9,9 +9,19 @@
 //!   loss waterfall without a penalty and pays both sides out.
 //!
 //! Loss waterfall: loser margin → insurance fund (same mint) → haircut on the winner (shortfall).
-//! Payouts only ever go to the canonical ATAs of `position.long` / `position.short`.
+//! Payouts only ever go to token accounts (of the position's mint) owned by `position.long` /
+//! `position.short`. Any such account is accepted, not just the canonical ATA, so a party cannot
+//! block settlement by reassigning its ATA's owner; Token-2022 payout accounts with
+//! RequiredMemoTransfers or CpiGuard enabled are rejected (`PayoutAccountUnsupported`) and the
+//! caller passes a fresh plain account owned by that party instead.
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked};
+use anchor_spl::{
+    token_2022::spl_token_2022::{
+        self,
+        extension::{cpi_guard::CpiGuard, memo_transfer::MemoTransfer, BaseStateWithExtensions, StateWithExtensions},
+    },
+    token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked},
+};
 
 use crate::{
     errors::ParityError,
@@ -88,11 +98,11 @@ pub struct Liquidate<'info> {
     /// Receives the liquidator reward.
     #[account(mut, token::mint = mint, token::authority = caller, token::token_program = token_program)]
     pub caller_ata: Box<InterfaceAccount<'info, TokenAccount>>,
-    #[account(mut, associated_token::mint = mint, associated_token::authority = position.long,
-        associated_token::token_program = token_program)]
+    /// Any token account of `mint` owned by `position.long` (receives the long side's payout).
+    #[account(mut, token::mint = mint, token::authority = position.long, token::token_program = token_program)]
     pub long_ata: Box<InterfaceAccount<'info, TokenAccount>>,
-    #[account(mut, associated_token::mint = mint, associated_token::authority = position.short,
-        associated_token::token_program = token_program)]
+    /// Any token account of `mint` owned by `position.short` (receives the short side's payout).
+    #[account(mut, token::mint = mint, token::authority = position.short, token::token_program = token_program)]
     pub short_ata: Box<InterfaceAccount<'info, TokenAccount>>,
     pub token_program: Interface<'info, TokenInterface>,
 }
@@ -126,11 +136,11 @@ pub struct Settle<'info> {
     #[account(mut, seeds = [b"insurance", mint.key().as_ref()], bump,
         token::mint = mint, token::token_program = token_program)]
     pub insurance: Box<InterfaceAccount<'info, TokenAccount>>,
-    #[account(mut, associated_token::mint = mint, associated_token::authority = position.long,
-        associated_token::token_program = token_program)]
+    /// Any token account of `mint` owned by `position.long` (receives the long side's payout).
+    #[account(mut, token::mint = mint, token::authority = position.long, token::token_program = token_program)]
     pub long_ata: Box<InterfaceAccount<'info, TokenAccount>>,
-    #[account(mut, associated_token::mint = mint, associated_token::authority = position.short,
-        associated_token::token_program = token_program)]
+    /// Any token account of `mint` owned by `position.short` (receives the short side's payout).
+    #[account(mut, token::mint = mint, token::authority = position.short, token::token_program = token_program)]
     pub short_ata: Box<InterfaceAccount<'info, TokenAccount>>,
     pub token_program: Interface<'info, TokenInterface>,
 }
@@ -241,6 +251,24 @@ impl<'info> Payer<'_, 'info> {
     }
 }
 
+/// Rejects a Token-2022 payout account that has RequiredMemoTransfers or CpiGuard enabled
+/// (an incoming program transfer without a memo would fail, blocking the close).
+fn check_payout_account(acc: &AccountInfo) -> Result<()> {
+    if *acc.owner != spl_token_2022::ID {
+        return Ok(());
+    }
+    let data = acc.try_borrow_data()?;
+    let state = StateWithExtensions::<spl_token_2022::state::Account>::unpack(&data)
+        .map_err(|_| error!(ParityError::PayoutAccountUnsupported))?;
+    if let Ok(memo) = state.get_extension::<MemoTransfer>() {
+        require!(!bool::from(memo.require_incoming_transfer_memos), ParityError::PayoutAccountUnsupported);
+    }
+    if let Ok(guard) = state.get_extension::<CpiGuard>() {
+        require!(!bool::from(guard.lock_cpi), ParityError::PayoutAccountUnsupported);
+    }
+    Ok(())
+}
+
 /// Shared entry checks: open position, fresh-enough price (`publish_time >= last`, a future
 /// `last_publish_time` counts as 0), returns `(now, price)`.
 fn read_price(
@@ -270,6 +298,10 @@ pub fn handle_liquidate(ctx: Context<Liquidate>) -> Result<()> {
         ParityError::PositionClosed
     );
     require!(pos.breach_count >= params.liq_confirm_marks, ParityError::NotConfirmed);
+    // At or after maturity the position is settled, not liquidated.
+    require!(effective_now(&a.config)? < pos.maturity, ParityError::NotLiquidatable);
+    check_payout_account(&a.long_ata.to_account_info())?;
+    check_payout_account(&a.short_ata.to_account_info())?;
     let (now, px) = read_price(
         &a.config,
         &pos,
@@ -379,6 +411,8 @@ pub fn handle_settle(ctx: Context<Settle>) -> Result<()> {
     // Maturity before the oracle read, so an early call reports NotMatured even when the market
     // is closed or the price is stale.
     require!(effective_now(&a.config)? >= pos.maturity, ParityError::NotMatured);
+    check_payout_account(&a.long_ata.to_account_info())?;
+    check_payout_account(&a.short_ata.to_account_info())?;
     let (now, px) = read_price(
         &a.config,
         &pos,
