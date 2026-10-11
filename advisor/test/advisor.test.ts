@@ -24,4 +24,8 @@ describe('advisor', () => {
   it('zero variance returns 1', () => {
     expect(hedgeRatio({ direction: 'buy', spot: 1, forward: 1, expected: 1, sigmaAnnual: 0, days: 30, risk: 'balanced' })).toBe(1);
   });
+  it('sigma floor applies', () => {
+    const b = { direction: 'buy' as const, spot: 42, forward: 45.8, expected: 45.0, days: 90, risk: 'balanced' as const };
+    expect(hedgeRatio({ ...b, sigmaAnnual: 0.0157 })).toBe(hedgeRatio({ ...b, sigmaAnnual: 0.10 }));
+  });
 });

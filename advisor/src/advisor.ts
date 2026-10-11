@@ -11,8 +11,13 @@ export function expectedSpot(spot: number, driftAnnual: number, days: number): n
   return spot * (1 + (driftAnnual * days) / 365);
 }
 
+/** Risk floor on volatility: managed-currency crawls (e.g. TRY) hide devaluation risk in realised vol. */
+export const SIGMA_FLOOR = 0.10;
+export function effectiveSigma(sigma: number): number { return Math.max(sigma, SIGMA_FLOOR); }
+
 export function hedgeRatio(p: { direction: Direction; spot: number; forward: number; expected: number; sigmaAnnual: number; days: number; risk: Risk }): number {
-  const v = p.sigmaAnnual * p.sigmaAnnual * (p.days / 365);
+  const sigma = effectiveSigma(p.sigmaAnnual);
+  const v = sigma * sigma * (p.days / 365);
   if (!(v > 0) || !(p.spot > 0)) return 1;
   const premium = (p.forward - p.expected) / p.spot;
   const adj = premium / (GAMMA[p.risk] * v);
