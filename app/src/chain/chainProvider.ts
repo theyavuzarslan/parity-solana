@@ -36,8 +36,10 @@ const TENORS: Tenor[] = [30, 90, 180];
 /** Program accounts (config, offers, rates …) are refetched at most every 15 s, on-chain prices every
  * 10 s, wallet balances and positions every 10 s; nothing refreshes while the tab is hidden, and
  * concurrent reads share one in-flight request. Writes invalidate everything (afterWrite). */
-const ACCOUNTS_TTL_MS = 15_000;
-const PRICES_TTL_MS = 10_000;
+// Public devnet RPC rate-limits per IP; prices are daily ECB references and every write forces a
+// refresh, so background reads stay slow.
+const ACCOUNTS_TTL_MS = 30_000;
+const PRICES_TTL_MS = 20_000;
 const WALLET_TTL_MS = 10_000;
 const hidden = () => typeof document !== "undefined" && document.visibilityState === "hidden";
 const QUIET = new Set(["MarketClosedOrStale", "StalePublishTime", "NotLiquidatable", "NotConfirmed", "NotMatured"]);
@@ -400,6 +402,7 @@ export function createChainProvider(opts: ChainOptions): ParityData {
     const raw = `${msg}\n${logs}`;
     if (name) return Object.assign(new Error(`The program refused: ${name}.`), { code: name, raw, cause: e });
     if (/User rejected|rejected the request/i.test(msg)) return Object.assign(new Error("You cancelled the signature."), { raw, cause: e });
+    if (/^Unexpected error$|429|rate limit/i.test(msg)) return Object.assign(new Error("The wallet could not send: the devnet RPC is busy. Check Wallet, then try again in a few seconds."), { raw, cause: e });
     return Object.assign(new Error(msg), { raw, cause: e });
   }
 
