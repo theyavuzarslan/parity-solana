@@ -20,6 +20,10 @@ import { marketById } from "./markets.js";
 export { decide };
 
 const INTERVAL = Number(process.env.KEEPER_INTERVAL_MS ?? 5_000);
+// Healthy (Open, no breach) positions are marked at most every KEEPER_HEALTHY_MARK_SECS to save fees;
+// Called / breached / partially liquidated positions are marked every tick.
+const HEALTHY_MARK_SECS = Number(process.env.KEEPER_HEALTHY_MARK_SECS ?? 15);
+const lastMark = new Map<string, number>();
 const QUIET = new Set(["MarketClosedOrStale", "StalePublishTime", "NotLiquidatable", "NotConfirmed", "NotMatured"]);
 
 export type Payout = { address: PublicKey; ixs: TransactionInstruction[]; signers: Keypair[]; note: string };
@@ -132,6 +136,10 @@ async function tick(p: any, keeper: Keypair, mints: Mints) {
     const input = () => ({ confirmMarks: confirm, now, maturity: account.maturity.toNumber() });
     const plan = decide({ ...input(), status: statusOf(account.status), breachCount: account.breachCount });
     let pos = account;
+    const healthy = statusOf(account.status) === "open" && account.breachCount === 0;
+    if (plan.length === 1 && plan[0] === "mark" && healthy &&
+      Date.now() - (lastMark.get(publicKey.toBase58()) ?? 0) < HEALTHY_MARK_SECS * 1000) continue;
+    if (plan.includes("mark")) lastMark.set(publicKey.toBase58(), Date.now());
     for (const kind of plan) {
       try { pos = await crank(p, keeper, mints, publicKey, pos, kind); }
       catch (e) {
