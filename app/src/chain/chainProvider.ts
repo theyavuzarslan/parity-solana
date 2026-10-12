@@ -45,6 +45,13 @@ const POSITION_SPACE = 8 + 32 + 8 + 32 + 32 + 2 + 32 + 8 * 3 + 8 + 8 + 8 * 3 + 1
 
 const usdToUnits = (usd: number) => BigInt(Math.round(usd * 1e6));
 const units = (x: { toString(): string } | bigint) => Number(x.toString()) / 1e6;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Retries a read on any error (public devnet RPC answers bursts with 429), 0.4 s → 0.8 s → 1.6 s. */
+async function withRetry<T>(fn: () => Promise<T>, tries = 4): Promise<T> {
+  for (let i = 0; ; i++) {
+    try { return await fn(); } catch (e) { if (i >= tries - 1) throw e; await sleep(400 * 2 ** i); }
+  }
+}
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const pad4 = (n: number) => String(n).padStart(4, "0");
 const enumKey = (e: object) => Object.keys(e)[0] ?? "";
@@ -262,12 +269,17 @@ export function createChainProvider(opts: ChainOptions): ParityData {
     const w = bridge.current();
     if (!w) return { connected: false, address: null, label: null, balances: { USDC: 0, USDG: 0 } as Record<Mint, number>, solBalance: 0 };
     const s = await getSnap();
-    const bal = async (mint: PublicKey) => {
-      const ata = getAssociatedTokenAddressSync(mint, w.publicKey, true, tokenProgramFor(s, mint));
-      try { return Number((await connection.getTokenAccountBalance(ata, "confirmed")).value.uiAmount ?? 0); } catch { return 0; }
+    const ata = (mint: PublicKey) => getAssociatedTokenAddressSync(mint, w.publicKey, true, tokenProgramFor(s, mint));
+    // One RPC call for SOL + both token accounts, retried: the public devnet RPC rate-limits bursts
+    // (429), and an RPC error must never read as a zero balance (it would block the lock as "need SOL").
+    const infos = await withRetry(() => connection.getMultipleAccountsInfo([w.publicKey, ata(s.cfg.usdcMint), ata(s.cfg.usdgMint)], "confirmed"));
+    // SPL token account (and the Token-2022 base layout): amount is a u64 at offset 64.
+    const tokenUi = (i: number) => {
+      const d = infos[i]?.data;
+      return d && d.length >= 72 ? units(new DataView(d.buffer, d.byteOffset, d.byteLength).getBigUint64(64, true)) : 0;
     };
-    const [usdc, usdg, lamports] = await Promise.all([bal(s.cfg.usdcMint), bal(s.cfg.usdgMint), connection.getBalance(w.publicKey, "confirmed").catch(() => 0)]);
-    return { connected: true, address: w.publicKey.toBase58(), label: w.label, balances: { USDC: usdc, USDG: usdg } as Record<Mint, number>, solBalance: lamports / LAMPORTS_PER_SOL, lamports };
+    const lamports = infos[0]?.lamports ?? 0;
+    return { connected: true, address: w.publicKey.toBase58(), label: w.label, balances: { USDC: tokenUi(1), USDG: tokenUi(2) } as Record<Mint, number>, solBalance: lamports / LAMPORTS_PER_SOL, lamports };
   }
 
   // ---------- positions ----------
@@ -607,7 +619,9 @@ export function createChainProvider(opts: ChainOptions): ParityData {
       if (CHAIN.cluster !== "localnet") {
         // Devnet: no programmatic airdrop (rate-limited); open the official faucet for this wallet.
         if (typeof window !== "undefined") window.open(SOL_FAUCET_URL, "_blank", "noopener");
-        const bal = (await connection.getBalance(w.publicKey, "confirmed").catch(() => 0)) / LAMPORTS_PER_SOL;
+        walletCache.clear();
+        notify();
+        const bal = (await withRetry(() => connection.getBalance(w.publicKey, "confirmed")).catch(() => 0)) / LAMPORTS_PER_SOL;
         return { amount: 0, balance: bal, signature: "" };
       }
       const sig = await connection.requestAirdrop(w.publicKey, 2 * LAMPORTS_PER_SOL);
