@@ -63,12 +63,15 @@ export type PreflightReason = "NO_OFFER" | "NEED_SOL" | "NEED_COLLATERAL" | "CAP
 export type LadderPreflight = { ok: true } | { ok: false; reason: PreflightReason; message: string };
 
 /**
- * Checks before signing, in this order: NO_OFFER → TENOR → CAPACITY → NEED_SOL → NEED_COLLATERAL.
+ * Checks before signing, in this order: NO_OFFER → NEED_SOL → NEED_COLLATERAL → CAPACITY → TENOR.
+ * Either one `offer` for every rung, or `legs` (one offer per rung, possibly shared): capacity,
+ * minimum notional and the maker's locked margin are checked JOINTLY for rungs sharing an offer.
  * `needLamports` (rent for N position accounts + fees) is computed by the caller; 0.01 SOL is the floor.
  */
 export function preflight(p: {
   rungs: Rung[];
-  offer: OfferView | null;
+  offer?: OfferView | null;
+  legs?: (Leg | null)[];
   collateralBalance: bigint;
   solLamports: number;
   imBps: number;
@@ -77,21 +80,49 @@ export function preflight(p: {
   minNotional?: bigint;
   makerFeeShareBps?: number;
 }): LadderPreflight {
-  const { rungs, offer } = p;
-  if (!offer || !offer.active) return { ok: false, reason: "NO_OFFER", message: "No maker is quoting this market and side right now." };
-  const bad = rungs.find((r) => r.tenorDays < offer.minTenor || r.tenorDays > offer.maxTenor);
-  if (bad) return { ok: false, reason: "TENOR", message: `The maker quotes ${offer.minTenor}–${offer.maxTenor} days; ${bad.tenorDays} days is outside that range.` };
-  const total = sum(rungs.map((r) => r.notionalUsd));
-  if (total > offer.capacityUsd) return { ok: false, reason: "CAPACITY", message: `The maker has $${fmtUsd(offer.capacityUsd)} of capacity left; this ladder needs $${fmtUsd(total)}.` };
-  if (p.minNotional !== undefined && rungs.some((r) => r.notionalUsd < p.minNotional!)) return { ok: false, reason: "CAPACITY", message: `Each month must be at least $${fmtUsd(p.minNotional)}.` };
-  if (p.makerFeeShareBps !== undefined && offer.marginLocked < sum(rungs.map((r) => makerCost(r.notionalUsd, offer.spreadBps, { imBps: p.imBps, makerFeeShareBps: p.makerFeeShareBps! })))) {
-    return { ok: false, reason: "CAPACITY", message: "The maker's locked margin cannot cover this ladder." };
-  }
+  const legs: (Leg | null)[] = p.legs ?? p.rungs.map((r) => (p.offer ? { ...r, offer: p.offer } : null));
+  if (legs.length === 0 || legs.some((l) => !l || !l.offer.active)) return { ok: false, reason: "NO_OFFER", message: "No maker is quoting this market and side right now." };
+  const all = legs as Leg[];
   const needSol = Math.max(p.needLamports ?? 0, 10_000_000);
   if (p.solLamports < needSol) return { ok: false, reason: "NEED_SOL", message: `You need about ${(needSol / 1e9).toFixed(3)} test SOL for fees and account rent.` };
-  const need = requiredCollateral(rungs, p.imBps, p.openFeeBps);
+  const need = requiredCollateral(all, p.imBps, p.openFeeBps);
   if (p.collateralBalance < need) return { ok: false, reason: "NEED_COLLATERAL", message: `You need $${fmtUsd(need)} of test collateral; you hold $${fmtUsd(p.collateralBalance)}.` };
+  if (p.minNotional !== undefined && all.some((r) => r.notionalUsd < p.minNotional!)) return { ok: false, reason: "CAPACITY", message: `Each month must be at least $${fmtUsd(p.minNotional)}.` };
+  const groups = new Map<string, Leg[]>();
+  for (const l of all) groups.set(l.offer.pubkey.toBase58(), [...(groups.get(l.offer.pubkey.toBase58()) ?? []), l]);
+  for (const g of groups.values()) {
+    const o = g[0]!.offer;
+    const total = sum(g.map((r) => r.notionalUsd));
+    if (total > o.capacityUsd) return { ok: false, reason: "CAPACITY", message: `The maker has $${fmtUsd(o.capacityUsd)} of capacity left; this ladder needs $${fmtUsd(total)} from it.` };
+    if (p.makerFeeShareBps !== undefined && o.marginLocked < sum(g.map((r) => makerCost(r.notionalUsd, o.spreadBps, { imBps: p.imBps, makerFeeShareBps: p.makerFeeShareBps! })))) {
+      return { ok: false, reason: "CAPACITY", message: "The maker's locked margin cannot cover this ladder." };
+    }
+  }
+  const bad = all.find((r) => r.tenorDays < r.offer.minTenor || r.tenorDays > r.offer.maxTenor);
+  if (bad) return { ok: false, reason: "TENOR", message: `The maker quotes ${bad.offer.minTenor}–${bad.offer.maxTenor} days; ${bad.tenorDays} days is outside that range.` };
   return { ok: true };
+}
+
+/**
+ * One offer per rung: a single offer for all rungs when one fits; otherwise the best offer per
+ * rung against the capacity and maker margin still LEFT after the rungs already assigned to it.
+ */
+export function assignLegs(offers: OfferView[], takerLong: boolean, mint: PublicKey, rungs: Rung[], params: LadderParams): (Leg | null)[] {
+  const single = pickOffer(offers, takerLong, mint, rungs, params);
+  if (single) return rungs.map((r) => ({ ...r, offer: single }));
+  const used = new Map<string, { notional: bigint; margin: bigint }>();
+  return rungs.map((r) => {
+    const left = offers.map((o) => {
+      const u = used.get(o.pubkey.toBase58());
+      return u ? { ...o, capacityUsd: o.capacityUsd - u.notional, marginLocked: o.marginLocked - u.margin } : o;
+    });
+    const pick = pickOffer(left, takerLong, mint, [r], params);
+    if (!pick) return null;
+    const original = offers.find((o) => o.pubkey.equals(pick.pubkey))!;
+    const u = used.get(pick.pubkey.toBase58()) ?? { notional: 0n, margin: 0n };
+    used.set(pick.pubkey.toBase58(), { notional: u.notional + r.notionalUsd, margin: u.margin + makerCost(r.notionalUsd, pick.spreadBps, params) });
+    return { ...r, offer: original };
+  });
 }
 
 const fmtUsd = (x: bigint) => (Number(x) / 1e6).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });

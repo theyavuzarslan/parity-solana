@@ -377,7 +377,12 @@ function ActionBar({
         Get test SOL
       </Button>
     );
-    notice = <Notice title="Fees need test SOL">Step 2 of 3. A devnet airdrop with no value pays the signature fee.</Notice>;
+    notice = (
+      <Notice title="Fees need test SOL">
+        Step 2 of 3. A devnet airdrop with no value pays the signature fee.
+        {info?.kind === "chain" && info.cluster === "devnet" ? " Get it from faucet.solana.com first: the test-token faucet only serves wallets holding at least 0.01 SOL." : ""}
+      </Notice>
+    );
   } else if (preflight && !preflight.ok && preflight.reason === "need-tokens") {
     button = (
       <Button id="lock-it" variant="primary" size="lg" block loading={busy === "faucet"} loadingLabel="Requesting…" error={err} onClick={() => run("faucet", () => data.faucet(mint))}>

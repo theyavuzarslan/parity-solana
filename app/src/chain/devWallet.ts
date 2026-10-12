@@ -1,8 +1,10 @@
 /**
- * LOCALNET ONLY: a wallet-adapter whose key lives on the dev server (keys/taker.json, or the
- * deployer keypair for the admin variant). Transactions are signed by the dev API routes, which
- * hard-refuse unless NEXT_PUBLIC_CLUSTER=localnet and the request comes from localhost. The secret
- * never reaches the browser. Registered in the wallet list only when the cluster is localnet.
+ * LOCAL DEV ONLY: a wallet-adapter whose key lives on the dev server (keys/taker.json, or the
+ * deployer keypair for the admin variant). Transactions are signed by the dev API routes, whose
+ * request-time server guard (server/devWallet.ts) refuses unless PARITY_DEV_WALLET=1, VERCEL is
+ * unset, NODE_ENV is not production and the request is to localhost. The secret never reaches the
+ * browser. The adapter is only listed when NEXT_PUBLIC_CLUSTER=localnet (a UI convenience, not a
+ * security boundary).
  */
 import { BaseSignerWalletAdapter, WalletNotConnectedError, WalletReadyState, type WalletName } from "@solana/wallet-adapter-base";
 import { PublicKey, Transaction, type TransactionVersion, type VersionedTransaction } from "@solana/web3.js";

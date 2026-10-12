@@ -235,7 +235,7 @@ function SetupCard() {
           {!connected ? <p className="mt-1.5 text-xs">Connect first; the faucet pays the connected wallet.</p> : null}
         </li>
       </ol>
-      <p className="mt-3 text-xs">{info?.kind === "chain" ? `Faucet mints test USDC and USDG on ${info.cluster}; test SOL comes from faucet.solana.com. Test tokens have no value.` : "Mock faucet and wallet for this preview; test tokens have no value."}</p>
+      <p className="mt-3 text-xs">{info?.kind === "chain" ? `Faucet mints test USDC and USDG on ${info.cluster}. Get test SOL from faucet.solana.com first: the token faucet only serves wallets holding at least 0.01 SOL. Test tokens have no value.` : "Mock faucet and wallet for this preview; test tokens have no value."}</p>
     </CarbonCopy>
   );
 }

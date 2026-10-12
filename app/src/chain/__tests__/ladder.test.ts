@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { marketById } from "shared/src/markets";
-import { buildLadderTx, pickOffer, preflight, requiredCollateral, type OfferView, type Rung } from "../ladder";
+import { assignLegs, buildLadderTx, pickOffer, preflight, requiredCollateral, type OfferView, type Rung } from "../ladder";
 import { pdas } from "../pda";
 import { makeProgram } from "../program";
 
@@ -70,6 +70,41 @@ describe("preflight", () => {
     expect(requiredCollateral(rungs, 1200, 10)).toBe($(363));
     expect(preflight({ ...base, collateralBalance: $(362.99) })).toMatchObject({ ok: false, reason: "NEED_COLLATERAL" });
     expect(preflight({ ...base, collateralBalance: $(363) })).toEqual({ ok: true });
+  });
+});
+
+describe("preflight order and shared offers", () => {
+  const base = { rungs, offer: offer({}), collateralBalance: $(10_000), solLamports: 1e9, imBps: 1200, openFeeBps: 10 };
+
+  it("runs NO_OFFER → NEED_SOL → NEED_COLLATERAL → CAPACITY → TENOR", () => {
+    const allBad = { ...base, offer: offer({ capacityUsd: $(1), maxTenor: 10 }), solLamports: 0, collateralBalance: 0n };
+    expect(preflight({ ...allBad, offer: null })).toMatchObject({ reason: "NO_OFFER" });
+    expect(preflight(allBad)).toMatchObject({ reason: "NEED_SOL" });
+    expect(preflight({ ...allBad, solLamports: 1e9 })).toMatchObject({ reason: "NEED_COLLATERAL" });
+    expect(preflight({ ...allBad, solLamports: 1e9, collateralBalance: $(10_000) })).toMatchObject({ reason: "CAPACITY" });
+    expect(preflight({ ...allBad, solLamports: 1e9, collateralBalance: $(10_000), offer: offer({ maxTenor: 10 }) })).toMatchObject({ reason: "TENOR" });
+  });
+
+  it("checks capacity jointly when two rungs share an offer (legs)", () => {
+    const shared = offer({ capacityUsd: $(1_500) });
+    const other = offer({});
+    const legs = [{ ...rungs[0], offer: shared }, { ...rungs[1], offer: shared }, { ...rungs[2], offer: other }];
+    // each $1,000 rung fits $1,500 alone, but two on the same offer need $2,000
+    expect(preflight({ ...base, legs })).toMatchObject({ ok: false, reason: "CAPACITY" });
+    expect(preflight({ ...base, legs: [{ ...rungs[0], offer: shared }, { ...rungs[1], offer: other }, { ...rungs[2], offer: other }] })).toEqual({ ok: true });
+    expect(preflight({ ...base, legs: [legs[0], null, legs[2]] })).toMatchObject({ reason: "NO_OFFER" });
+  });
+
+  it("assignLegs spreads rungs over offers using the capacity left after earlier rungs", () => {
+    const params = { imBps: 1200, openFeeBps: 10, makerFeeShareBps: 1000, minNotional: $(10) };
+    const tight = offer({ spreadBps: 10, capacityUsd: $(1_500) }); // takes one rung only
+    const wide = offer({ spreadBps: 40, capacityUsd: $(2_000) });
+    const legs = assignLegs([tight, wide], false, USDC, rungs, params);
+    expect(legs.map((l) => l?.offer)).toEqual([tight, wide, wide]);
+    expect(preflight({ ...base, legs })).toEqual({ ok: true });
+    // not enough left anywhere for the third rung -> null (NO SEATS), never an over-committed offer
+    const legs2 = assignLegs([tight, offer({ spreadBps: 40, capacityUsd: $(1_000) })], false, USDC, rungs, params);
+    expect(legs2[2]).toBeNull();
   });
 });
 

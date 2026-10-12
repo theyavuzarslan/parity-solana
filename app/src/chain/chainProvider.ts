@@ -24,7 +24,7 @@ import type {
 } from "@/data/types";
 import type { WalletBridge } from "./bridge";
 import { CHAIN, SOL_FAUCET_URL } from "./config";
-import { buildLadderTx, bpsCeil, pickOffer, preflight as preflightLadder, requiredCollateral, type Leg, type OfferView, type Rung } from "./ladder";
+import { assignLegs, buildLadderTx, bpsCeil, preflight as preflightLadder, requiredCollateral, type Leg, type OfferView, type Rung } from "./ladder";
 import { pdas, priceFeedPda, code3 } from "./pda";
 import { readOnchainPrices, type PriceReadView } from "./prices";
 import { eventParser, makeProgram, programErrorName, type ParityProgram } from "./program";
@@ -303,9 +303,12 @@ export function createChainProvider(opts: ChainOptions): ParityData {
   function friendly(e: unknown): Error {
     const name = programErrorName(e) ?? programErrorName((e as { error?: unknown })?.error);
     const msg = (e as Error)?.message ?? String(e);
-    if (name) return Object.assign(new Error(`The program refused: ${name}.`), { code: name });
-    if (/User rejected|rejected the request/i.test(msg)) return new Error("You cancelled the signature.");
-    return new Error(msg);
+    // Keep the original error and its logs (raw) so callers can match on them, not on our wording.
+    const logs = ((e as { logs?: string[] })?.logs ?? []).join("\n");
+    const raw = `${msg}\n${logs}`;
+    if (name) return Object.assign(new Error(`The program refused: ${name}.`), { code: name, raw, cause: e });
+    if (/User rejected|rejected the request/i.test(msg)) return Object.assign(new Error("You cancelled the signature."), { raw, cause: e });
+    return Object.assign(new Error(msg), { raw, cause: e });
   }
 
   async function afterWrite() {
@@ -398,11 +401,7 @@ export function createChainProvider(opts: ChainOptions): ParityData {
     const params = { imBps, openFeeBps: s.cfg.params.openFeeBps, makerFeeShareBps: s.cfg.params.makerFeeShareBps, minNotional: s.cfg.params.minNotional };
     const offers = s.offers.filter((o) => o.marketId === meta.id);
     const rungs: Rung[] = req.rungs.map((r) => ({ tenorDays: r.tenorDays, notionalUsd: usdToUnits(r.amount) }));
-    const single = pickOffer(offers, takerLong, mint, rungs, params);
-    const legs = rungs.map((r) => {
-      const o = single ?? pickOffer(offers, takerLong, mint, [r], params);
-      return o ? { ...r, offer: o } : null;
-    });
+    const legs = assignLegs(offers, takerLong, mint, rungs, params);
     const t0 = effNow(s);
     const quoteRungs: RungQuote[] = req.rungs.map((r, i) => {
       const leg = legs[i];
@@ -425,30 +424,36 @@ export function createChainProvider(opts: ChainOptions): ParityData {
     };
   }
 
+  /** The live preflight IS ladder.preflight (tested), plus the wallet and market-hours checks. */
   async function check(p: Planned): Promise<Preflight> {
     const w = bridge.current();
     if (!w) return { ok: false, reason: "no-wallet" };
     const s = await getSnap();
-    const ws = await walletState();
     const q = quoteFor(s, p.quote.market);
-    const rent = await connection.getMinimumBalanceForRentExemption(POSITION_SPACE).catch(() => 2_500_000);
-    const needLamports = rent * p.quote.rungs.length + 50_000;
-    if ((ws.lamports ?? 0) < Math.max(needLamports, 10_000_000)) return { ok: false, reason: "need-sol" };
     if (isPaused(q.status)) return { ok: false, reason: "market-closed", status: q.status };
-    if (p.legs.some((l) => !l)) return { ok: false, reason: "no-offer" };
-    const imBps = Math.round(p.quote.imPct * 100);
-    // Per offer: tenor, capacity, min notional, maker margin (pure plan-Task-11 preflight).
-    const byOffer = new Map<string, Leg[]>();
-    for (const l of p.legs as Leg[]) byOffer.set(l.offer.pubkey.toBase58(), [...(byOffer.get(l.offer.pubkey.toBase58()) ?? []), l]);
-    for (const legs of byOffer.values()) {
-      const r = preflightLadder({ rungs: legs, offer: legs[0].offer, collateralBalance: BigInt(Number.MAX_SAFE_INTEGER), solLamports: Number.MAX_SAFE_INTEGER, imBps, openFeeBps: p.quote.openFeeBps, minNotional: s.cfg.params.minNotional, makerFeeShareBps: s.cfg.params.makerFeeShareBps });
-      if (!r.ok) return { ok: false, reason: "no-offer", detail: r.message };
+    const ws = await walletState();
+    const rent = await connection.getMinimumBalanceForRentExemption(POSITION_SPACE).catch(() => 2_500_000);
+    const r = preflightLadder({
+      rungs: p.legs.map((l, i) => l ?? { tenorDays: p.quote.rungs[i]!.tenorDays, notionalUsd: usdToUnits(p.quote.rungs[i]!.amount) }),
+      legs: p.legs,
+      collateralBalance: usdToUnits(ws.balances[p.quote.mint]),
+      solLamports: ws.lamports ?? 0,
+      needLamports: rent * p.quote.rungs.length + 50_000,
+      imBps: Math.round(p.quote.imPct * 100),
+      openFeeBps: p.quote.openFeeBps,
+      minNotional: s.cfg.params.minNotional,
+      makerFeeShareBps: s.cfg.params.makerFeeShareBps,
+    });
+    if (r.ok) return r;
+    switch (r.reason) {
+      case "NO_OFFER": return { ok: false, reason: "no-offer" };
+      case "NEED_SOL": return { ok: false, reason: "need-sol" };
+      case "NEED_COLLATERAL": {
+        const need = requiredCollateral(p.legs.filter((l): l is Leg => !!l), Math.round(p.quote.imPct * 100), p.quote.openFeeBps);
+        return { ok: false, reason: "need-tokens", requiredUsd: units(need), balanceUsd: ws.balances[p.quote.mint] };
+      }
+      default: return { ok: false, reason: "no-offer", detail: r.message }; // CAPACITY / TENOR
     }
-    const all = (p.legs as Leg[]).map(({ tenorDays, notionalUsd }) => ({ tenorDays, notionalUsd }));
-    const need = requiredCollateral(all, imBps, p.quote.openFeeBps);
-    const bal = usdToUnits(ws.balances[p.quote.mint]);
-    if (bal < need) return { ok: false, reason: "need-tokens", requiredUsd: units(need), balanceUsd: ws.balances[p.quote.mint] };
-    return { ok: true };
   }
 
   const provider: ParityData = {
@@ -527,9 +532,14 @@ export function createChainProvider(opts: ChainOptions): ParityData {
       try {
         sig = await sendTx(built.tx);
       } catch (e) {
-        // A position counter can move between quote and send (another taker): refetch and rebuild once.
-        if (!/ConstraintSeeds|AccountAlreadyInUse|already in use/i.test((e as Error).message)) throw e;
+        // A position counter can move between quote and send (another taker): refetch, re-check, rebuild once.
+        // Match the original program error / logs, not our friendly wording.
+        const err = e as { code?: string; raw?: string };
+        if (!(err.code === "ConstraintSeeds" || /already in use/i.test(err.raw ?? ""))) throw e;
+        await getSnap(true);
         const fresh = await plan(req);
+        const pf2 = await check(fresh);
+        if (!pf2.ok) throw new Error(`Preflight failed on retry: ${pf2.reason}${"detail" in pf2 && pf2.detail ? ` — ${pf2.detail}` : ""}`);
         built = await build(fresh.legs as Leg[]);
         sig = await sendTx(built.tx);
       }
