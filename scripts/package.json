@@ -1,0 +1,33 @@
+{
+  "name": "scripts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "mints": "tsx src/01-mints.ts",
+    "init": "tsx src/02-init.ts",
+    "rates-markets": "tsx src/03-rates-markets.ts",
+    "offers": "tsx src/04-offers.ts",
+    "insurance": "tsx src/05-insurance.ts",
+    "seed": "tsx src/01-mints.ts && tsx src/02-init.ts && tsx src/03-rates-markets.ts && tsx src/04-offers.ts && tsx src/05-insurance.ts && tsx src/06-devnet-doc.ts",
+    "relay": "tsx src/relay.ts",
+    "keeper": "tsx src/keeper.ts",
+    "taker": "tsx src/taker-demo.ts",
+    "typecheck": "tsc --noEmit",
+    "demo-admin": "tsx src/demo-admin.ts"
+  },
+  "dependencies": {
+    "@anchor-lang/core": "1.2.1",
+    "@solana/spl-token": "^0.4.13",
+    "@solana/spl-token-metadata": "^0.1.6",
+    "@solana/web3.js": "^1.98.0",
+    "bn.js": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.1.6",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  }
+}
