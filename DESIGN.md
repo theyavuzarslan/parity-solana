@@ -24,7 +24,7 @@ Source world: jet-age airline ticket wallet, fused with Parity's facts. Quality 
 | Legal status | **Conditions of contract** strip on every page (fine print, always visible) |
 | Status changes | **Stamps**: LOCKED (navy), MARGIN CALL (red outline), PARTIAL (red outline + 30%), VOID (red, liquidated), SETTLED (carbon purple) |
 
-The metaphor lives in grammar (tabs, ruled fields, stamps, carbon numerals). No planes, globes, luggage, boarding-pass barcodes, tulips, evil eyes or Iznik tiles. One mark only: the Parity wordmark.
+The metaphor lives in grammar (tabs, ruled fields, stamps, carbon numerals). No planes, globes, luggage, boarding-pass barcodes (the issued ticket's signature strip is the one exception: real data — the transaction signature's base58 digits drawn as bars, always labelled with the short signature), tulips, evil eyes or Iznik tiles. One mark only: the Parity wordmark.
 
 ## 2. Color (OKLCH tokens; never inline values)
 
@@ -44,6 +44,10 @@ The metaphor lives in grammar (tabs, ruled fields, stamps, carbon numerals). No 
   --color-rule:        oklch(23% 0.06 265 / 0.9);
   --color-hairline:    oklch(23% 0.06 265 / 0.18);
   --color-focus:       oklch(57% 0.21 27);
+  --color-gold:        oklch(76% 0.12 85);    /* gold-foil stub — GAU/TRY, XAU/USD, XAG/USD order tickets only */
+  --color-gold-2:      oklch(86% 0.09 90);    /* foil sheen highlight (one static 135° gradient, .stub-gold) */
+  --color-gold-ink:    oklch(30% 0.07 70);    /* ink on gold foil */
+  --color-scrim:       oklch(23% 0.06 265 / 0.55); /* order-ticket sheet backdrop */
 }
 ```
 Strategy: **Restrained** (neutral stock + navy ink), red reserved for (a) the single primary action on a screen, (b) tenor tabs, (c) VOID/MARGIN CALL stamps. Gains/losses: sign + word + carbon/red ink, never colour alone. No automatic dark mode (paper world); the graphite Theme B (§9) is an explicit user choice. Respect `prefers-contrast: more` with solid rules.
@@ -63,7 +67,8 @@ Strategy: **Restrained** (neutral stock + navy ink), red reserved for (a) the si
 ## 5. Components
 
 - **Coupon** — props: index, market, tenor, strike, notional, lockedAmount, maturity, status, mint, past. Head: navy index block + tabs; red tenor tab sits over the stub column. Body: route `USD → TRY` in display 2–2.5rem, maturity "SETTLES 12 JAN 2027", carbon amount; extra content (margin bar, PnL, no-seat actions) lives in the body beside the stub. Stub (right, dashed perforation, notched): position No., mint, notional, tag. Status renders as a **stamp** rotated −6°. VOID adds a red hatched stub edge (`.void-edge`, board.png card). `past` = greyed, no shadow (Past tickets). **BlankCoupon**: dashed edge and notches, empty ruled fields, "—", faint watermark ("NO TICKETS YET" / "PRINTS AFTER CHECK-IN").
-- **Stamp** — LOCKED / MARGIN CALL / PARTIAL 30% / VOID / SETTLED / NO SEATS (navy outline: no maker quotes that tenor); 2–3px border, condensed caps, slight ink texture via CSS mask noise; enters with a 180ms scale 1.15→1 + opacity (spring, no bounce).
+- **TicketSheet** (order ticket) — LOCK IT opens a modal sheet that grows out of the button (critically damped spring; reduced motion → fade). QUOTE: the first rung as a full Coupon (spot today → locked rate, settlement date, carbon amount received, margin, open fee, maker spread, price-source tag from `sourceLabel`), "QUOTE · VALID 60s" with a live countdown (screen readers hear it in 10-s steps); on expiry it re-quotes and re-runs preflight — a stale quote is never signed. Ladders are a booklet: full ticket + one stacked stub per further rung (date, amount) + a totals stub. Actions: "Sign & lock" (primary) and "Back"; Esc closes before signing; focus is trapped. ISSUED: LOCKED stamp, ticket No. from the position, the signature strip (Explorer link on devnet; mock provider: "preview — not on chain", no link), "View in Wallet" + "Done". Failure: NOT ISSUED stamp (red, VOID-style edge), readable error, "Try again". Gold markets swap the stub for `.stub-gold` and show grams and ounces; in the Solana skin the gold stub is flat (gold rule and ink, no sheen).
+- **Stamp** — LOCKED / MARGIN CALL / PARTIAL 30% / VOID / SETTLED / NOT ISSUED (red, order ticket failed) / NO SEATS (navy outline: no maker quotes that tenor); 2–3px border, condensed caps, slight ink texture via CSS mask noise; enters with a 180ms scale 1.15→1 + opacity (spring, no bounce).
 - **StatusBoard** — ruled table, condensed caps headers, tabular numerals; status chips outline-only (OPEN green, CLOSED navy + "FX reopens Sunday 22:00 UTC", STALE amber = no feed/demo price, REF dashed navy-2 = ECB daily reference, "not a live feed"). Every spot carries a source tag under it (Pyth · ECB 09 OCT · demo · last 14:02 UTC).
 - **CarbonCopy** — a lilac **stub ticket** (hero.png "carbon copy"): four notched corners plus a notch at the top of the tear; a vertical dashed perforation splits off a stub column (No., mint, count, status); a horizontal dashed tear; then a display-size carbon total (`.carbon-total`, `clamp(1.75rem, 13cqi, 3rem)` so long lira totals fit the column) and ruled copy lines. Used for the Advisor receipt (which becomes the 3-step setup checklist — Connect wallet → Get test SOL → Get test USDC, current step filled — when the wallet is not ready), the loss waterfall, devnet setup and marking conditions.
 - **Check-in** — one question per step (What describes you best? · monthly amount · lira need · horizon 1/3/6 months · how a 10% move would feel), ticket-style tappable cards (2px navy, dashed stub with A/B/C/✓), five progress ticks that reopen answered steps, Back, Enter submits numeric steps. Step 6 is a summary sentence, editable answer chips and one sentence of why. Comfort maps to the advisor risk keys (Painful → conservative, Manageable → balanced, I'd take the chance → opportunistic).

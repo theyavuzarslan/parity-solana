@@ -22,6 +22,12 @@
   --color-rule: oklch(23% 0.06 265 / 0.9);
   --color-hairline: oklch(23% 0.06 265 / 0.18);
   --color-focus: oklch(57% 0.21 27);
+  /* gold-foil stub (GAU/TRY, XAU/USD, XAG/USD order tickets) */
+  --color-gold: oklch(76% 0.12 85);
+  --color-gold-2: oklch(86% 0.09 90);
+  --color-gold-ink: oklch(30% 0.07 70);
+  /* order-ticket sheet backdrop */
+  --color-scrim: oklch(23% 0.06 265 / 0.55);
   --color-transparent: transparent;
   --color-current: currentColor;
 
@@ -234,6 +240,20 @@ body {
   border-bottom-right-radius: 8px;
 }
 
+/* Gold-foil stub: one subtle sheen across the foil, no animation. */
+.stub-gold {
+  background: linear-gradient(135deg, var(--color-gold) 0%, var(--color-gold-2) 42%, var(--color-gold) 58%, var(--color-gold) 100%);
+  color: var(--color-gold-ink);
+}
+.stub-gold .text-navy,
+.stub-gold .text-navy-2,
+.stub-gold .text-carbon { color: var(--color-gold-ink); }
+
+/* Order-ticket sheet (quote → issued). */
+.ticket-scrim { background: var(--color-scrim); }
+.sig-strip { color: var(--color-navy); }
+.sig-strip rect { fill: currentColor; }
+
 /* Carbon copy: lilac stub ticket with notched corners and a vertical perforation. */
 .carbon-ticket {
   --stub-w: 7.5rem;
@@ -435,6 +455,12 @@ input[type="number"] {
 [data-theme="solana"] .pos-row { box-shadow: 0 1px 0 oklch(100% 0 0 / 0.03) inset, 0 6px 16px oklch(0% 0 0 / 0.25); }
 [data-theme="solana"] .check-tick.bg-carbon { background: var(--color-navy); }
 [data-theme="solana"] .void-edge { opacity: 0.6; }
+/* Gold stub on graphite: flat, no sheen (the gradient belongs to the primary button only). */
+[data-theme="solana"] .stub-gold { background: var(--color-coupon); color: var(--color-gold); border-left: 1px solid var(--color-gold); }
+[data-theme="solana"] .stub-gold .text-navy,
+[data-theme="solana"] .stub-gold .text-navy-2,
+[data-theme="solana"] .stub-gold .text-carbon { color: var(--color-gold); }
+:root[data-theme="solana"] { --color-scrim: oklch(0% 0 0 / 0.6); }
 [data-theme="solana"] [role="meter"] .bg-carbon { background: var(--color-navy-2); opacity: 0.55; }
 /* Phone tab bar: graphite surface, hairline top rule, active tab as a soft pill (no red mark). */
 :root[data-theme="solana"] {

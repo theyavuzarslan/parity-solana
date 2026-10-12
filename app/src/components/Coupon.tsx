@@ -32,6 +32,10 @@ export interface CouponProps {
   compact?: boolean;
   /** past ticket: greyed, no shadow */
   past?: boolean;
+  /** extra class on the stub (e.g. "stub-gold") */
+  stubClass?: string;
+  /** extra stub rows (e.g. grams and ounces for gold) */
+  stubExtra?: ReactNode;
 }
 
 /**
@@ -102,7 +106,7 @@ export function Coupon(p: CouponProps) {
           </div>
 
           {/* Stub */}
-          <dl className="ticket-stub relative grid grid-cols-3 content-center gap-x-3 gap-y-1.5 px-4 py-2.5 @lg:grid-cols-1 @lg:content-start @lg:py-4">
+          <dl className={cx("ticket-stub relative grid grid-cols-3 content-center gap-x-3 gap-y-1.5 px-4 py-2.5 @lg:grid-cols-1 @lg:content-start @lg:py-4", p.stubClass)}>
             <div>
               <dt className="t-label text-xs text-navy-2">NO.</dt>
               <dd className="t-num text-sm text-navy">{p.no ?? "—"}</dd>
@@ -115,8 +119,9 @@ export function Coupon(p: CouponProps) {
               <dt className="t-label text-xs text-navy-2">NOTIONAL</dt>
               <dd className="t-num text-sm text-carbon">{fmtUsd(p.notionalUsd, 0)}</dd>
             </div>
+            {p.stubExtra}
             {p.tag ? <dd className="t-label col-span-3 text-xs text-navy-2 @lg:col-span-1">{p.tag}</dd> : null}
-            {voided ? <span aria-hidden className="void-edge" /> : null}
+            {voided || p.status === "NOT ISSUED" ? <span aria-hidden className="void-edge" /> : null}
           </dl>
         </div>
       </article>
