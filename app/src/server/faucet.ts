@@ -9,6 +9,8 @@
  *   2. once per wallet per 10 minutes;
  *   3. once per client IP (first x-forwarded-for hop) per 10 minutes;
  *   4. a global cap of GLOBAL_CAP_PER_HOUR successful requests per rolling hour.
+ * Slots are reserved synchronously right after the checks (before any await) and released on
+ * every failure path (403 low/missing SOL, 502), so a parallel burst cannot slip past them.
  * All limits are in memory, per server instance (on Vercel each instance has its own maps), so
  * they are a courtesy limit backed by the SOL requirement, not a guarantee.
  */
@@ -51,9 +53,11 @@ export function createFaucet(deps: {
   globalCapPerHour?: number;
   log?: (msg: string) => void;
 }) {
-  const byOwner = new Map<string, number>();
-  const byIp = new Map<string, number>();
-  let recent: number[] = [];
+  // Each reservation carries a unique token so a release only undoes its own slot.
+  type Slot = { at: number; token: symbol };
+  const byOwner = new Map<string, Slot>();
+  const byIp = new Map<string, Slot>();
+  let recent: Slot[] = [];
   const now = deps.now ?? (() => Date.now());
   const windowMs = deps.windowMs ?? FAUCET_WINDOW_MS;
   const cap = deps.globalCapPerHour ?? GLOBAL_CAP_PER_HOUR;
@@ -72,41 +76,50 @@ export function createFaucet(deps: {
       }
       const key = owner.toBase58();
       const t = now();
-      recent = recent.filter((x) => t - x < HOUR_MS);
+      recent = recent.filter((x) => t - x.at < HOUR_MS);
       if (recent.length >= cap) {
-        return { status: 429, body: { error: "The faucet is busy — it has handed out its hourly allowance. Try again later.", retryAfterSecs: Math.ceil((HOUR_MS - (t - recent[0]!)) / 1000) } };
+        return { status: 429, body: { error: "The faucet is busy — it has handed out its hourly allowance. Try again later.", retryAfterSecs: Math.ceil((HOUR_MS - (t - recent[0]!.at)) / 1000) } };
       }
       const prevOwner = byOwner.get(key);
-      if (prevOwner !== undefined && t - prevOwner < windowMs) {
-        const s = wait(prevOwner, t);
+      if (prevOwner !== undefined && t - prevOwner.at < windowMs) {
+        const s = wait(prevOwner.at, t);
         return { status: 429, body: { error: `This wallet already got test tokens. Try again in about ${Math.ceil(s / 60)} min.`, retryAfterSecs: s } };
       }
       const prevIp = byIp.get(ip);
-      if (prevIp !== undefined && t - prevIp < windowMs) {
-        const s = wait(prevIp, t);
+      if (prevIp !== undefined && t - prevIp.at < windowMs) {
+        const s = wait(prevIp.at, t);
         return { status: 429, body: { error: `Test tokens were already sent to this network recently. Try again in about ${Math.ceil(s / 60)} min.`, retryAfterSecs: s } };
       }
+
+      // Reserve the owner, IP and global slots NOW — synchronously after the checks and before
+      // any await — so concurrent requests see them. Every non-200 exit below releases them.
+      const slot: Slot = { at: t, token: Symbol("faucet") };
+      byOwner.set(key, slot);
+      byIp.set(ip, slot);
+      recent.push(slot);
+      const release = () => {
+        if (byOwner.get(key)?.token === slot.token) byOwner.delete(key);
+        if (byIp.get(ip)?.token === slot.token) byIp.delete(ip);
+        recent = recent.filter((x) => x.token !== slot.token);
+      };
+
       let lamports: number | null;
       try {
         lamports = await deps.getLamports(owner);
       } catch (e) {
+        release();
         log(`[faucet] balance lookup failed for ${key}: ${(e as Error).message}`);
         return { status: 502, body: { error: "The faucet could not reach the network. Try again in a minute." } };
       }
       if (lamports === null || lamports < MIN_OWNER_SOL * LAMPORTS_PER_SOL) {
+        release();
         return { status: 403, body: { error: NEED_SOL_MESSAGE, needSol: MIN_OWNER_SOL, solFaucet: "https://faucet.solana.com" } };
       }
-      // Reserve every slot before the await so parallel requests cannot all pass.
-      byOwner.set(key, t);
-      byIp.set(ip, t);
-      recent.push(t);
       try {
         const signature = await deps.mintTo(owner);
         return { status: 200, body: { signature, amount: FAUCET_AMOUNT, mints: ["USDC", "USDG"] } };
       } catch (e) {
-        byOwner.delete(key);
-        byIp.delete(ip);
-        recent.splice(recent.lastIndexOf(t), 1);
+        release();
         log(`[faucet] mint for ${key} failed: ${(e as Error).message}`);
         return { status: 502, body: { error: "The faucet transaction failed. Try again in a minute." } };
       }

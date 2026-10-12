@@ -83,3 +83,64 @@ describe("faucet route handler", () => {
     void quiet;
   });
 });
+
+describe("faucet under concurrent bursts", () => {
+  const slowFunded = async () => { await new Promise((r) => setTimeout(r, 5)); return LAMPORTS_PER_SOL; };
+
+  it("10 parallel requests for the same owner and IP -> exactly 1 succeeds", async () => {
+    const mintTo = vi.fn(async () => { await new Promise((r) => setTimeout(r, 5)); return "sig"; });
+    const f = createFaucet({ mintTo, getLamports: slowFunded });
+    const owner = key();
+    const replies = await Promise.all(Array.from({ length: 10 }, () => f.handle({ owner }, "7.7.7.7")));
+    expect(replies.filter((r) => r.status === 200)).toHaveLength(1);
+    expect(replies.filter((r) => r.status === 429)).toHaveLength(9);
+    expect(mintTo).toHaveBeenCalledTimes(1);
+  });
+
+  it("10 parallel requests from one IP for different owners -> exactly 1 succeeds", async () => {
+    const f = createFaucet({ mintTo: async () => "sig", getLamports: slowFunded });
+    const replies = await Promise.all(Array.from({ length: 10 }, () => f.handle({ owner: key() }, "7.7.7.8")));
+    expect(replies.filter((r) => r.status === 200)).toHaveLength(1);
+  });
+
+  it("70 parallel different owners and IPs -> at most 60 succeed (global cap)", async () => {
+    const mintTo = vi.fn(async () => "sig");
+    const f = createFaucet({ mintTo, getLamports: slowFunded });
+    const replies = await Promise.all(Array.from({ length: 70 }, (_, i) => f.handle({ owner: key() }, `10.1.0.${i}`)));
+    const ok = replies.filter((r) => r.status === 200).length;
+    expect(ok).toBeLessThanOrEqual(60);
+    expect(ok).toBe(60);
+    expect(mintTo).toHaveBeenCalledTimes(60);
+  });
+
+  it("a request refused for low SOL releases its slots (owner, IP and global)", async () => {
+    let sol = 0;
+    const f = createFaucet({ mintTo: async () => "sig", getLamports: async () => sol, globalCapPerHour: 1 });
+    const owner = key();
+    expect((await f.handle({ owner }, "5.5.5.5")).status).toBe(403);
+    sol = LAMPORTS_PER_SOL;
+    expect((await f.handle({ owner }, "5.5.5.5")).status).toBe(200); // same owner, same IP, cap 1 still free
+  });
+
+  it("a released request does not free a slot taken by a later request", async () => {
+    let resolveFirst!: (v: number | null) => void;
+    const calls: number[] = [];
+    let t = 0;
+    const f = createFaucet({
+      mintTo: async () => "sig",
+      now: () => t,
+      getLamports: async () => {
+        calls.push(calls.length);
+        if (calls.length === 1) return new Promise<number | null>((r) => { resolveFirst = r; });
+        return LAMPORTS_PER_SOL;
+      },
+    });
+    const first = f.handle({ owner: key() }, "6.6.6.6"); // holds the IP slot, waiting on balance
+    t += FAUCET_WINDOW_MS; // window passes while the first is in flight
+    const second = await f.handle({ owner: key() }, "6.6.6.6"); // takes the IP slot anew
+    expect(second.status).toBe(200);
+    resolveFirst(null); // first fails (no SOL) and releases — must not delete the second's slot
+    expect((await first).status).toBe(403);
+    expect((await f.handle({ owner: key() }, "6.6.6.6")).status).toBe(429);
+  });
+});
