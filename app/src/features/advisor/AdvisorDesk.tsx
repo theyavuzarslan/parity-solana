@@ -253,7 +253,7 @@ export function AdvisorDesk() {
             <Mechanism advice={advice} quote={quote} rates={rates.value} />
           </section>
           <section className="min-w-0 px-4 py-6 md:px-6 lg:col-span-7">
-            <Scenarios advice={advice} quote={quote} lq={lqLock} monthly={inputs!.monthlyUsd} months={inputs!.months} />
+            <Scenarios advice={advice} quote={quote} lq={lock.kind === "done" ? lock.lq : lqLock} monthly={inputs!.monthlyUsd} months={inputs!.months} />
           </section>
         </>
       ) : (
