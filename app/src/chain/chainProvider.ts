@@ -27,6 +27,7 @@ import { CHAIN, SOL_FAUCET_URL } from "./config";
 import { assignLegs, buildLadderTx, bpsCeil, preflight as preflightLadder, requiredCollateral, type Leg, type OfferView, type Rung } from "./ladder";
 import { pdas, priceFeedPda, code3 } from "./pda";
 import { readOnchainPrices, type PriceReadView } from "./prices";
+import { assertSameQuote } from "@/data/quoteDrift";
 import { pruneShocks, type ShockedSlot } from "./shocks";
 import { eventParser, makeProgram, programErrorName, type ParityProgram } from "./program";
 
@@ -620,8 +621,9 @@ export function createChainProvider(opts: ChainOptions): ParityData {
     async preflight(quote) {
       return check(await plan({ market: quote.market, side: quote.side, mint: quote.mint, rungs: quote.rungs.map(({ month, tenorDays, amount }) => ({ month, tenorDays, amount })) }));
     },
-    async lockLadder(req): Promise<LockResult> {
+    async lockLadder(req, expected): Promise<LockResult> {
       const p = await plan(req);
+      assertSameQuote(expected, p.quote); // never sign terms other than the ones shown
       const pf = await check(p);
       if (!pf.ok) throw new Error(`Preflight failed: ${pf.reason}${"detail" in pf && pf.detail ? ` — ${pf.detail}` : ""}`);
       const s = await getSnap();
@@ -638,6 +640,7 @@ export function createChainProvider(opts: ChainOptions): ParityData {
         if (!(err.code === "ConstraintSeeds" || /already in use/i.test(err.raw ?? ""))) throw e;
         await getSnap(true);
         const fresh = await plan(req);
+        assertSameQuote(expected, fresh.quote); // the retry re-plans: same rule
         const pf2 = await check(fresh);
         if (!pf2.ok) throw new Error(`Preflight failed on retry: ${pf2.reason}${"detail" in pf2 && pf2.detail ? ` — ${pf2.detail}` : ""}`);
         built = await build(fresh.legs as Leg[]);

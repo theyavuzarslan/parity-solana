@@ -6,7 +6,8 @@ import { motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useParity, useParityQuery } from "@/data/provider";
 import { marketConfig, TROY_OUNCE_GRAMS } from "@/data/markets";
-import type { LadderQuote, LadderRequest, LockResult, MarketQuote, Position, Preflight, RungQuote } from "@/data/types";
+import type { LadderQuote, LadderRequest, LockResult, MarketQuote, ParityData, Position, Preflight, RungQuote } from "@/data/types";
+import { isQuoteChanged } from "@/data/quoteDrift";
 import { fmtCcy } from "@/lib/currency";
 import { cx, fmtDate, fmtNum, fmtPrice, fmtUsd } from "@/lib/format";
 import { fade, spring } from "@/lib/motion";
@@ -20,7 +21,7 @@ import { Stamp } from "@/components/Stamp";
 export const QUOTE_VALID_MS = 60_000;
 export const PREVIEW_SIG_LABEL = "preview — not on chain";
 
-type Phase = "quote" | "repricing" | "signing" | "issued" | "failed";
+type Phase = "quote" | "repricing" | "signing" | "checking" | "issued" | "failed";
 
 export interface TicketSheetProps {
   req: LadderRequest;
@@ -54,41 +55,53 @@ export function TicketSheet({ req, lq: lq0, quote: q0, anchor, validForMs = QUOT
   const [pf, setPf] = useState<Preflight | null>({ ok: true });
   const [quotedAt, setQuotedAt] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
-  const [repriced, setRepriced] = useState(false);
+  /** why the ticket was re-quoted: the 60 s ran out, or the terms moved at sign time */
+  const [repriced, setRepriced] = useState<null | "expired" | "changed">(null);
   const [result, setResult] = useState<LockResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The sheet only opens on a click, so it never renders on the server.
+  const [host] = useState<HTMLElement | null>(() => {
+    if (typeof document === "undefined") return null;
+    const el = document.createElement("div");
+    el.dataset.ticketSheet = "";
+    return el;
+  });
   const dialogRef = useRef<HTMLDivElement>(null);
   const primaryRef = useRef<HTMLButtonElement>(null);
-  const busy = useRef(false);
+  /** one action at a time: a sign and a re-quote can never overlap, a double click signs once */
+  const action = useRef<null | "sign" | "reprice">(null);
 
   const expiresAt = quotedAt + validForMs;
   const remainingMs = Math.max(0, expiresAt - now);
   const secs = Math.ceil(remainingMs / 1000);
 
+  const showQuote = useCallback(async (fresh: LadderQuote, why: "expired" | "changed") => {
+    const [check, markets] = await Promise.all([data.preflight(fresh), data.getMarkets()]);
+    setRepriced(why);
+    setLq(fresh);
+    setPf(check);
+    const mq = markets.find((m) => m.id === fresh.market);
+    if (mq) setQuote(mq);
+    const t = Date.now();
+    setQuotedAt(t);
+    setNow(t);
+    setPhase("quote");
+  }, [data]);
+
   const reprice = useCallback(async () => {
-    if (busy.current) return;
-    busy.current = true;
+    if (action.current) return;
+    action.current = "reprice";
     setPhase("repricing");
     setError(null);
     try {
-      const [fresh, markets] = await Promise.all([data.quoteLadder(req), data.getMarkets()]);
-      const check = await data.preflight(fresh);
-      setRepriced(fresh.rungs.some((r, i) => r.strike !== lq.rungs[i]?.strike));
-      setLq(fresh);
-      setPf(check);
-      const mq = markets.find((m) => m.id === req.market);
-      if (mq) setQuote(mq);
-      const t = Date.now();
-      setQuotedAt(t);
-      setNow(t);
-      setPhase("quote");
+      await showQuote(await data.quoteLadder(req), "expired");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not re-price this quote.");
       setPhase("failed");
     } finally {
-      busy.current = false;
+      action.current = null;
     }
-  }, [data, req, lq]);
+  }, [data, req, showQuote]);
 
   // Countdown clock (stops once signing starts); expiry re-prices the quote from the timer callback.
   const expiryRef = useRef(expiresAt);
@@ -99,7 +112,7 @@ export function TicketSheet({ req, lq: lq0, quote: q0, anchor, validForMs = QUOT
     const id = setInterval(() => {
       const t = Date.now();
       setNow(t);
-      if (t >= expiryRef.current) void repriceRef.current();
+      if (t >= expiryRef.current && !action.current) void repriceRef.current();
     }, Math.min(250, Math.max(20, validForMs / 4)));
     return () => clearInterval(id);
   }, [phase, validForMs]);
@@ -108,44 +121,82 @@ export function TicketSheet({ req, lq: lq0, quote: q0, anchor, validForMs = QUOT
   const canSign = phase === "quote" && remainingMs > 0 && !!pf?.ok && seated;
 
   const sign = async () => {
+    if (action.current) return; // double click, or a re-quote already started
     if (Date.now() >= expiresAt) { void reprice(); return; } // never sign a stale quote
     if (!canSign) return;
+    action.current = "sign";
     setPhase("signing");
+    setError(null);
+    let before: Set<string> | null = null;
     try {
-      const res = await data.lockLadder(req);
+      before = new Set((await data.getPositions()).map((p) => p.id));
+      // The provider re-plans right before signing and refuses (QuoteChangedError) if anything differs.
+      const res = await data.lockLadder(req, lq);
       setResult(res);
       setPhase("issued");
       onIssued?.(res, lq);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "The transaction failed.");
-      setPhase("failed");
+      if (isQuoteChanged(e)) {
+        try { await showQuote(e.fresh, "changed"); } catch { setError("The quote changed and could not be re-priced."); setPhase("failed"); }
+      } else {
+        const msg = e instanceof Error ? e.message : "The transaction failed.";
+        if (before && mayHaveLanded(msg)) {
+          setPhase("checking");
+          const landed = await findLanded(data, lq, before).catch(() => []);
+          if (landed.length) {
+            const res = { signature: "", positions: landed };
+            setResult(res);
+            setPhase("issued");
+            onIssued?.(res, lq);
+            return;
+          }
+        }
+        setError(msg);
+        setPhase("failed");
+      }
+    } finally {
+      action.current = null;
     }
   };
 
-  /* ---- focus: trap inside, restore on close ---- */
+  /* ---- modal: own portal host, background inert, focus trapped and restored ---- */
   useLayoutEffect(() => {
+    const el = host;
+    if (!el) return;
+    document.body.appendChild(el);
+    const others = Array.from(document.body.children).filter((c) => c !== el && !c.hasAttribute("inert"));
+    others.forEach((c) => c.setAttribute("inert", ""));
     const prev = document.activeElement as HTMLElement | null;
-    (primaryRef.current ?? dialogRef.current)?.focus();
-    return () => prev?.focus?.();
-  }, []);
+    return () => {
+      others.forEach((c) => c.removeAttribute("inert"));
+      el.remove();
+      prev?.focus?.();
+    };
+  }, [host]);
+  // Every phase change moves focus: the primary action when it can take it, else the dialog
+  // (while signing / re-pricing / checking the primary is busy and disabled).
   useEffect(() => {
-    if (phase === "issued" || phase === "failed") (primaryRef.current ?? dialogRef.current)?.focus();
-  }, [phase]);
+    if (!host) return;
+    const busy = phase === "signing" || phase === "repricing" || phase === "checking";
+    const target = !busy && primaryRef.current && !primaryRef.current.disabled ? primaryRef.current : dialogRef.current;
+    target?.focus();
+  }, [phase, host, canSign]);
+  // Esc closes only while the ticket is still a quote (never mid-signature).
+  useEffect(() => {
+    if (phase !== "quote") return;
+    const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape" && !action.current) { e.stopPropagation(); onClose(); } };
+    document.addEventListener("keydown", onEsc);
+    return () => document.removeEventListener("keydown", onEsc);
+  }, [phase, onClose]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      if (phase === "signing") return;
-      e.stopPropagation();
-      onClose();
-      return;
-    }
     if (e.key !== "Tab" || !dialogRef.current) return;
     const items = Array.from(
       dialogRef.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'),
     );
-    if (!items.length) { e.preventDefault(); return; }
+    if (!items.length) { e.preventDefault(); dialogRef.current.focus(); return; }
     const first = items[0], last = items[items.length - 1];
-    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    if (e.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   };
 
@@ -156,18 +207,23 @@ export function TicketSheet({ req, lq: lq0, quote: q0, anchor, validForMs = QUOT
   const dy = anchor && anchor.height ? (anchor.top + anchor.height / 2 - vh / 2) * 0.35 : 12;
 
   const gold = isGoldMarket(quote);
-  const positions = result?.positions ?? [];
   const issued = phase === "issued";
   const failed = phase === "failed";
-  const r0 = lq.rungs[0];
+  // Issued: render what was actually created (positions by maturity), not the displayed quote.
+  const rows = issued && result ? issuedRows(result.positions, lq) : quoteRows(lq);
+  const r0 = rows[0];
   const titleId = "ticket-sheet-title";
+  const busyLabel = phase === "repricing" ? "Re-pricing…" : phase === "checking" ? "Checking…" : "Signing…";
 
   const statusTab = issued ? (
-    <span className="t-label text-sm text-navy" data-testid="ticket-status">ISSUED · {positions.length} COUPON{positions.length === 1 ? "" : "S"}</span>
+    <span className="t-label text-sm text-navy" data-testid="ticket-status">ISSUED · {rows.length} COUPON{rows.length === 1 ? "" : "S"}</span>
   ) : failed ? (
     <span className="t-label text-sm text-red" data-testid="ticket-status">NOT ISSUED</span>
+  ) : phase === "checking" ? (
+    <span className="t-label text-sm text-navy" data-testid="ticket-status" role="status">Checking whether the lock landed…</span>
   ) : (
     <span className="t-label text-sm text-navy" data-testid="ticket-status">
+      {repriced === "changed" ? <span className="text-red">RE-PRICED · </span> : null}
       QUOTE · VALID {Math.round(validForMs / 1000)}s ·{" "}
       <span className="t-num text-carbon" aria-hidden data-testid="ticket-countdown">
         {phase === "repricing" ? "re-pricing" : `${secs}s`}
@@ -187,7 +243,7 @@ export function TicketSheet({ req, lq: lq0, quote: q0, anchor, validForMs = QUOT
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         transition={fade}
-        onClick={phase === "signing" ? undefined : onClose}
+        onClick={phase === "quote" || failed || issued ? onClose : undefined}
       />
       <motion.div
         ref={dialogRef}
@@ -218,34 +274,38 @@ export function TicketSheet({ req, lq: lq0, quote: q0, anchor, validForMs = QUOT
               tenorDays={r0.tenorDays}
               strike={r0.strike}
               notionalUsd={r0.notionalUsd}
-              lockedAmount={issued && positions[0] ? positions[0].quantity * positions[0].strike : r0.lockedQuote}
-              maturity={issued && positions[0] ? positions[0].maturity : r0.maturity}
+              lockedAmount={r0.lockedQuote}
+              maturity={r0.maturity}
               mint={lq.mint}
-              no={issued ? positions[0]?.no : undefined}
+              no={r0.no}
               status={issued ? "LOCKED" : failed ? "NOT ISSUED" : null}
               tag={issued ? (onChain ? "ON DEVNET" : "PREVIEW · NOT ON CHAIN") : failed ? "NOT LOCKED" : "QUOTE · NOT LOCKED"}
               stubClass={gold ? "stub-gold" : undefined}
-              stubExtra={gold ? <MetalQty quote={quote} notionalUsd={r0.notionalUsd} position={positions[0]} /> : undefined}
+              stubExtra={gold ? <MetalQty quote={quote} notionalUsd={r0.notionalUsd} position={r0.position} /> : undefined}
             >
-              <QuoteFacts lq={lq} r={r0} quote={quote} single={lq.rungs.length === 1} />
-              {issued && result ? <SigStrip signature={result.signature} onChain={onChain} /> : null}
+              <QuoteFacts lq={lq} r={r0} quote={quote} single={rows.length === 1} />
+              {issued && result ? (result.signature ? <SigStrip signature={result.signature} onChain={onChain} /> : <p className="mt-3 text-xs text-navy-2" data-testid="sig-missing">The wallet returned no signature; these coupons were found in your wallet.</p>) : null}
             </Coupon>
           </div>
 
-          {lq.rungs.length > 1 ? (
+          {rows.length > 1 ? (
             <ol className="space-y-1.5" aria-label="More coupons in this booklet">
-              {lq.rungs.slice(1).map((r, i) => (
-                <li key={r.month} data-rung-stub="">
-                  <RungStub index={i + 2} r={r} lq={lq} gold={gold} no={issued ? positions[i + 1]?.no : undefined} issued={issued} />
+              {rows.slice(1).map((r, i) => (
+                <li key={r.no ?? `${r.month}-${r.tenorDays}`} data-rung-stub="">
+                  <RungStub index={i + 2} r={r} lq={lq} gold={gold} no={r.no} issued={issued} />
                 </li>
               ))}
             </ol>
           ) : null}
 
-          <TotalsStub lq={lq} gold={gold} />
+          <TotalsStub lq={lq} rows={rows} gold={gold} />
 
           {repriced && phase === "quote" ? (
-            <p className="text-sm text-navy" role="status">Re-priced: the quote expired and was quoted again at today&apos;s price.</p>
+            <p className="text-sm text-navy" role="status" data-testid="repriced-note">
+              {repriced === "changed"
+                ? "Re-priced: the terms moved before signing, so nothing was signed. Check the new ticket and sign again."
+                : "Re-priced: the quote expired and was quoted again at today\u2019s price."}
+            </p>
           ) : null}
           {phase === "quote" && pf && !pf.ok ? (
             <p className="text-sm text-red" role="alert">This quote can&apos;t be signed right now ({pf.reason.replace("-", " ")}). Go back to fix it.</p>
@@ -272,14 +332,14 @@ export function TicketSheet({ req, lq: lq0, quote: q0, anchor, validForMs = QUOT
               </>
             ) : (
               <>
-                <Button variant="secondary" size="lg" disabled={phase === "signing"} onClick={onClose}>Back</Button>
+                <Button variant="secondary" size="lg" disabled={phase !== "quote"} onClick={onClose}>Back</Button>
                 <Button
                   ref={primaryRef}
                   id="ticket-sign"
                   variant="primary"
                   size="lg"
-                  loading={phase === "signing" || phase === "repricing"}
-                  loadingLabel={phase === "repricing" ? "Re-pricing…" : "Signing…"}
+                  loading={phase === "signing" || phase === "repricing" || phase === "checking"}
+                  loadingLabel={busyLabel}
                   disabled={!canSign}
                   onClick={() => void sign()}
                 >
@@ -297,10 +357,43 @@ export function TicketSheet({ req, lq: lq0, quote: q0, anchor, validForMs = QUOT
     </div>
   );
 
-  return typeof document === "undefined" ? null : createPortal(sheet, document.body);
+  return host ? createPortal(sheet, host) : null;
 }
 
 /* ---------------------------------------------------------------- */
+
+/** A ticket row: a quoted rung, or (issued) a created position with its rung's fee terms. */
+type Row = RungQuote & { no?: string; position?: Position };
+
+const byMaturity = <T extends { maturity: number }>(xs: T[]) => [...xs].sort((a, b) => a.maturity - b.maturity);
+
+function quoteRows(lq: LadderQuote): Row[] {
+  return byMaturity(lq.rungs);
+}
+
+/** Issued rows come from the positions the provider returned, sorted by maturity; No. per row is its own position's. */
+export function issuedRows(positions: Position[], lq: LadderQuote): Row[] {
+  const rungs = byMaturity(lq.rungs);
+  return byMaturity(positions).map((p, i) => {
+    const r = rungs.find((x) => x.tenorDays === p.tenorDays) ?? rungs[i] ?? rungs[0];
+    return {
+      ...r, tenorDays: p.tenorDays, strike: p.strike, notionalUsd: p.notionalUsd, maturity: p.maturity,
+      marginUsd: p.imUsd, lockedQuote: p.quantity * p.strike, no: p.no, position: p,
+    };
+  });
+}
+
+/** Errors after which the transaction may still have landed (timeouts, dropped connections, unknown). */
+export function mayHaveLanded(msg: string): boolean {
+  if (/preflight failed|rejected|declined|cancel|insufficient|simulation failed|blockhash not found|not connected/i.test(msg)) return false;
+  return true;
+}
+
+/** New positions on this market/side that were not there before signing and match a rung. */
+async function findLanded(data: ParityData, lq: LadderQuote, before: Set<string>): Promise<Position[]> {
+  const all = await data.getPositions();
+  return all.filter((p) => !before.has(p.id) && p.market === lq.market && p.side === lq.side && lq.rungs.some((r) => r.tenorDays === p.tenorDays && Math.abs(r.notionalUsd - p.notionalUsd) < 0.01));
+}
 
 function QuoteFacts({ lq, r, quote, single }: { lq: LadderQuote; r: RungQuote; quote: MarketQuote; single: boolean }) {
   const m = marketConfig(lq.market);
@@ -382,15 +475,15 @@ function RungStub({ index, r, lq, gold, no, issued }: { index: number; r: RungQu
   );
 }
 
-function TotalsStub({ lq, gold }: { lq: LadderQuote; gold: boolean }) {
+function TotalsStub({ lq, rows, gold }: { lq: LadderQuote; rows: Row[]; gold: boolean }) {
   const m = marketConfig(lq.market);
-  const total = lq.rungs.reduce((a, r) => a + r.lockedQuote, 0);
-  const notional = lq.rungs.reduce((a, r) => a + r.notionalUsd, 0);
+  const total = rows.reduce((a, r) => a + r.lockedQuote, 0);
+  const notional = rows.reduce((a, r) => a + r.notionalUsd, 0);
   return (
     <div className="ticket-shell" data-flat="">
       <dl className={cx("coupon grid grid-cols-2 gap-x-4 gap-y-1 border-dashed px-3 py-2.5 sm:grid-cols-4", gold && "stub-gold")} data-testid="ticket-totals">
         <div className="col-span-2 sm:col-span-1">
-          <dt className="t-label text-xs text-navy-2">Totals · {lq.rungs.length} coupon{lq.rungs.length > 1 ? "s" : ""}</dt>
+          <dt className="t-label text-xs text-navy-2">Totals · {rows.length} coupon{rows.length > 1 ? "s" : ""}</dt>
           <dd><Num className="text-xl font-semibold">{fmtCcy(total, m.quote, m.quote === "USD" ? 2 : 0)}</Num></dd>
         </div>
         <TotalLine label="Notional" value={fmtUsd(notional, 0)} />

@@ -7,6 +7,7 @@
  */
 import { DEMO_ONLY_FEEDS, DEMO_SPOTS, FEEDS, MARKETS, marketConfig, PROTOCOL, refDateToSec, SEED_RATES, SEED_REF_DATE, type FeedKey } from "./markets";
 import { carryPct, forwardFor, isPaused, marketStatus, pnlUsd, strikeFor, upqFromFeeds } from "./pricing";
+import { assertSameQuote } from "./quoteDrift";
 import { fetchLive, type LiveSnapshot } from "./pyth";
 import type {
   DemoState, DispatchEntry, FaucetResult, FeedHealth, LadderQuote, LadderRequest, LockResult,
@@ -371,8 +372,9 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
 
     async quoteLadder(req) { return quoteLadderSync(req); },
     async preflight(quote) { return preflightSync(quote); },
-    async lockLadder(req): Promise<LockResult> {
+    async lockLadder(req, expected): Promise<LockResult> {
       const quote = quoteLadderSync(req);
+      assertSameQuote(expected, quote);
       const pf = preflightSync(quote);
       if (!pf.ok) throw new Error(`Preflight failed: ${pf.reason}`);
       await sleep(opts.offline ? 0 : 1400);

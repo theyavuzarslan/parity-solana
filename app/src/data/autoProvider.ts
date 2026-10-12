@@ -46,7 +46,7 @@ export function createAutoProvider(): ParityData {
     requestSol: () => d().requestSol(),
     quoteLadder: (r) => d().quoteLadder(r),
     preflight: (q) => d().preflight(q),
-    lockLadder: (r) => d().lockLadder(r),
+    lockLadder: (r, e) => d().lockLadder(r, e),
     addMargin: (id, a) => d().addMargin(id, a),
     lockedByMonth: (m, s) => d().lockedByMonth(m, s),
     demo: {

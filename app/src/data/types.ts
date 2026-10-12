@@ -254,7 +254,11 @@ export interface ParityData {
   // Trading
   quoteLadder(req: LadderRequest): Promise<LadderQuote>;
   preflight(quote: LadderQuote): Promise<Preflight>;
-  lockLadder(req: LadderRequest): Promise<LockResult>;
+  /**
+   * `expected` (optional): the quote the user was shown. The provider re-plans right before building
+   * and signing and throws QuoteChangedError (data/quoteDrift) with the fresh quote on any drift.
+   */
+  lockLadder(req: LadderRequest, expected?: LadderQuote): Promise<LockResult>;
   addMargin(positionId: string, amountUsd: number): Promise<Position>;
   /**
    * Added in pass 2. USD notional already locked on this market and side, bucketed
