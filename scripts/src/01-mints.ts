@@ -13,7 +13,10 @@ import { createInitializeInstruction, pack, type TokenMetadata } from "@solana/s
 import { CLUSTER, KEYS, connection, deployer, ensureSol, keypair, sendIxs, exists } from "./env.js";
 
 const DECIMALS = 6;
-const FAUCET_SOL = CLUSTER === "devnet" ? 0.5 : 2;
+// The faucet key pays ATA rent (2 accounts, ~0.004 SOL) on every app faucet request: seed it with
+// FAUCET_SOL (default 3 SOL, ~700 requests) and top it up when the faucet route reports failures.
+const FAUCET_SOL = Number(process.env.FAUCET_SOL ?? 3);
+if (!Number.isFinite(FAUCET_SOL) || FAUCET_SOL <= 0) throw new Error(`FAUCET_SOL must be a positive number, got ${process.env.FAUCET_SOL}`);
 
 async function main() {
   const payer = deployer();

@@ -7,7 +7,8 @@
  *   1. the owner account must already exist on chain with ≥ MIN_OWNER_SOL (get devnet SOL from
  *      https://faucet.solana.com first);
  *   2. once per wallet per 10 minutes;
- *   3. once per client IP (first x-forwarded-for hop) per 10 minutes;
+ *   3. at most IP_LIMIT_PER_WINDOW (5) requests per client IP (first x-forwarded-for hop) per 10
+ *      minutes (relaxed so a demo room or office NAT can share one address);
  *   4. a global cap of GLOBAL_CAP_PER_HOUR successful requests per rolling hour.
  * Slots are reserved synchronously right after the checks (before any await) and released on
  * every failure path (403 low/missing SOL, 502), so a parallel burst cannot slip past them.
@@ -22,8 +23,10 @@ import {
   createAssociatedTokenAccountIdempotentInstruction, createMintToCheckedInstruction, getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 
-export const FAUCET_AMOUNT = 1_000;
+/** Per request: this much test USDC and this much test USDG (enough for a 6-month ladder plus top-ups). */
+export const FAUCET_AMOUNT = 10_000;
 export const FAUCET_WINDOW_MS = 10 * 60_000;
+export const IP_LIMIT_PER_WINDOW = 5;
 export const MIN_OWNER_SOL = 0.01;
 export const GLOBAL_CAP_PER_HOUR = 60;
 const HOUR_MS = 60 * 60_000;
@@ -51,16 +54,18 @@ export function createFaucet(deps: {
   now?: () => number;
   windowMs?: number;
   globalCapPerHour?: number;
+  ipLimit?: number;
   log?: (msg: string) => void;
 }) {
   // Each reservation carries a unique token so a release only undoes its own slot.
   type Slot = { at: number; token: symbol };
   const byOwner = new Map<string, Slot>();
-  const byIp = new Map<string, Slot>();
+  const byIp = new Map<string, Slot[]>();
   let recent: Slot[] = [];
   const now = deps.now ?? (() => Date.now());
   const windowMs = deps.windowMs ?? FAUCET_WINDOW_MS;
   const cap = deps.globalCapPerHour ?? GLOBAL_CAP_PER_HOUR;
+  const ipLimit = deps.ipLimit ?? IP_LIMIT_PER_WINDOW;
   const log = deps.log ?? ((m: string) => console.error(m));
   const wait = (since: number, t: number) => Math.ceil((windowMs - (t - since)) / 1000);
 
@@ -85,21 +90,23 @@ export function createFaucet(deps: {
         const s = wait(prevOwner.at, t);
         return { status: 429, body: { error: `This wallet already got test tokens. Try again in about ${Math.ceil(s / 60)} min.`, retryAfterSecs: s } };
       }
-      const prevIp = byIp.get(ip);
-      if (prevIp !== undefined && t - prevIp.at < windowMs) {
-        const s = wait(prevIp.at, t);
-        return { status: 429, body: { error: `Test tokens were already sent to this network recently. Try again in about ${Math.ceil(s / 60)} min.`, retryAfterSecs: s } };
+      const ipSlots = (byIp.get(ip) ?? []).filter((x) => t - x.at < windowMs);
+      byIp.set(ip, ipSlots);
+      if (ipSlots.length >= ipLimit) {
+        const s = wait(ipSlots[0]!.at, t);
+        return { status: 429, body: { error: `This network already got test tokens ${ipLimit} times in the last 10 minutes. Try again in about ${Math.ceil(s / 60)} min.`, retryAfterSecs: s } };
       }
 
       // Reserve the owner, IP and global slots NOW — synchronously after the checks and before
       // any await — so concurrent requests see them. Every non-200 exit below releases them.
       const slot: Slot = { at: t, token: Symbol("faucet") };
       byOwner.set(key, slot);
-      byIp.set(ip, slot);
+      ipSlots.push(slot);
       recent.push(slot);
       const release = () => {
         if (byOwner.get(key)?.token === slot.token) byOwner.delete(key);
-        if (byIp.get(ip)?.token === slot.token) byIp.delete(ip);
+        const left = (byIp.get(ip) ?? []).filter((x) => x.token !== slot.token);
+        if (left.length) byIp.set(ip, left); else byIp.delete(ip);
         recent = recent.filter((x) => x.token !== slot.token);
       };
 

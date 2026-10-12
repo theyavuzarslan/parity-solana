@@ -20,7 +20,7 @@ describe("Advisor LOCK IT preflight (after the check-in)", () => {
     const user = userEvent.setup();
     renderDesk(createMockProvider({ offline: true, connected: true, balances: { USDC: 0, USDG: 0 } }));
     await walkCheckIn(user);
-    const faucet = await screen.findByRole("button", { name: /get 1,000 test usdc/i });
+    const faucet = await screen.findByRole("button", { name: /get 10,000 test usdc/i });
     expect(faucet).toBeEnabled();
     expect(screen.queryByRole("button", { name: /^lock it$/i })).not.toBeInTheDocument();
     expect(screen.getByText(/needs \$[\d,.]+ test USDC/i)).toBeInTheDocument();
@@ -30,7 +30,7 @@ describe("Advisor LOCK IT preflight (after the check-in)", () => {
     const user = userEvent.setup();
     renderDesk(createMockProvider({ offline: true, connected: true, balances: { USDC: 0, USDG: 0 } }));
     await walkCheckIn(user);
-    await user.click(await screen.findByRole("button", { name: /get 1,000 test usdc/i }));
+    await user.click(await screen.findByRole("button", { name: /get 10,000 test usdc/i }));
     await waitFor(() => expect(screen.getByRole("button", { name: /^lock it$/i })).toBeEnabled());
   });
 

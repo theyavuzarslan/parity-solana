@@ -16,7 +16,8 @@ import type {
 const DAY = 86_400;
 const TENORS: Tenor[] = [30, 90, 180];
 const LIVE_TTL_SECS = 30;
-export const FAUCET_AMOUNT = 1_000;
+/** Mirrors server/faucet.ts: 10,000 test tokens per mint per request. */
+export const FAUCET_AMOUNT = 10_000;
 const LIQ_CONFIRM_MARKS = 3;
 
 const round2 = (n: number) => Math.round(n * 100) / 100;

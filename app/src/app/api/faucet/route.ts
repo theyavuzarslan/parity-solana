@@ -1,5 +1,5 @@
-// POST { owner } -> mints 1,000 test USDC + 1,000 test USDG to the owner's ATAs. The wallet must
-// already hold ≥ 0.01 devnet SOL (from https://faucet.solana.com); limits: once per wallet and per
+// POST { owner } -> mints 10,000 test USDC + 10,000 test USDG to the owner's ATAs. The wallet must
+// already hold ≥ 0.01 devnet SOL (from https://faucet.solana.com); limits: once per wallet and 5 per
 // IP per 10 minutes, 60 per hour per instance. See server/faucet.ts.
 import { clientIp, createFaucet, envGetLamports, envMintTo } from "@/server/faucet";
 

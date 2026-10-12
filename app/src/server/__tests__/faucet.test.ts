@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
 import { Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { clientIp, createFaucet, FAUCET_WINDOW_MS, NEED_SOL_MESSAGE } from "../faucet";
+import { clientIp, createFaucet, FAUCET_AMOUNT, FAUCET_WINDOW_MS, IP_LIMIT_PER_WINDOW, NEED_SOL_MESSAGE } from "../faucet";
 
 const key = () => Keypair.generate().publicKey.toBase58();
 const funded = async () => LAMPORTS_PER_SOL; // 1 SOL
@@ -14,7 +14,8 @@ describe("faucet route handler", () => {
     const f = createFaucet({ mintTo, getLamports: funded, now: () => t });
     const owner = key();
 
-    expect(await f.handle({ owner }, "1.1.1.1")).toMatchObject({ status: 200, body: { signature: "sig-ok", amount: 1000 } });
+    expect(await f.handle({ owner }, "1.1.1.1")).toMatchObject({ status: 200, body: { signature: "sig-ok", amount: 10_000 } });
+    expect(FAUCET_AMOUNT).toBe(10_000);
     t += FAUCET_WINDOW_MS - 1;
     const again = await f.handle({ owner }, "2.2.2.2");
     expect(again.status).toBe(429);
@@ -40,13 +41,14 @@ describe("faucet route handler", () => {
     expect((await f.handle({ owner: poor }, "1.1.1.1")).status).toBe(200);
   });
 
-  it("limits each client IP to one request per 10 minutes", async () => {
+  it("limits each client IP to 5 requests per 10 minutes (any wallets)", async () => {
     let t = 0;
     const f = createFaucet({ mintTo: async () => "sig", getLamports: funded, now: () => t });
-    expect((await f.handle({ owner: key() }, "9.9.9.9")).status).toBe(200);
+    expect(IP_LIMIT_PER_WINDOW).toBe(5);
+    for (let i = 0; i < 5; i++) expect((await f.handle({ owner: key() }, "9.9.9.9")).status).toBe(200);
     const r = await f.handle({ owner: key() }, "9.9.9.9");
     expect(r.status).toBe(429);
-    expect(String(r.body.error)).toMatch(/this network/);
+    expect(String(r.body.error)).toMatch(/This network/);
     expect((await f.handle({ owner: key() }, "8.8.8.8")).status).toBe(200);
     t += FAUCET_WINDOW_MS;
     expect((await f.handle({ owner: key() }, "9.9.9.9")).status).toBe(200);
@@ -97,10 +99,10 @@ describe("faucet under concurrent bursts", () => {
     expect(mintTo).toHaveBeenCalledTimes(1);
   });
 
-  it("10 parallel requests from one IP for different owners -> exactly 1 succeeds", async () => {
+  it("10 parallel requests from one IP for different owners -> exactly 5 succeed", async () => {
     const f = createFaucet({ mintTo: async () => "sig", getLamports: slowFunded });
     const replies = await Promise.all(Array.from({ length: 10 }, () => f.handle({ owner: key() }, "7.7.7.8")));
-    expect(replies.filter((r) => r.status === 200)).toHaveLength(1);
+    expect(replies.filter((r) => r.status === 200)).toHaveLength(5);
   });
 
   it("70 parallel different owners and IPs -> at most 60 succeed (global cap)", async () => {
@@ -129,6 +131,7 @@ describe("faucet under concurrent bursts", () => {
     const f = createFaucet({
       mintTo: async () => "sig",
       now: () => t,
+      ipLimit: 1,
       getLamports: async () => {
         calls.push(calls.length);
         if (calls.length === 1) return new Promise<number | null>((r) => { resolveFirst = r; });
