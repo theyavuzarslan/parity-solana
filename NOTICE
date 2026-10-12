@@ -1,0 +1,9 @@
+Parity includes third-party material under the MIT License. Each skill below is
+vendored in .claude/skills and remains under its original license and copyright.
+
+- hallmark (.claude/skills/hallmark): by Nutlope (MIT).
+- apple-design and emil-design-eng (.claude/skills/apple-design, .claude/skills/emil-design-eng):
+  by Emil Kowalski (MIT).
+- solana-dev (.claude/skills/solana-dev): by the Solana Foundation (MIT).
+
+The npm package thinking-orbs (MIT) is used as a dependency and is not vendored.
