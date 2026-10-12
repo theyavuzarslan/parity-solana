@@ -3,8 +3,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   devIndicators: false,
-  // The advisor package lives one level up (../advisor) and ships TypeScript source.
-  transpilePackages: ["advisor"],
+  // advisor and shared live one level up (../advisor, ../shared) and ship TypeScript source.
+  transpilePackages: ["advisor", "shared"],
   turbopack: {
     root: path.join(__dirname, ".."),
     rules: {

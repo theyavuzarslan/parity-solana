@@ -15,11 +15,13 @@ import { SourceTag } from "@/components/MarketRow";
 /** Run a dispatch action with per-button pending state. */
 function useAction() {
   const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const run = async (key: string, fn: () => Promise<DispatchEntry>) => {
     setBusy(key);
-    try { await fn(); } finally { setBusy(null); }
+    setErr(null);
+    try { await fn(); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(null); }
   };
-  return { busy, run };
+  return { busy, run, err };
 }
 
 export function DispatchSheet() {
@@ -28,15 +30,31 @@ export function DispatchSheet() {
   const markets = useParityQuery((d) => d.getMarkets(), [], undefined, (d) => d.peek?.markets());
   const rates = useParityQuery((d) => d.getRates());
   const log = useParityQuery((d) => d.getDispatchLog());
-  const { busy, run } = useAction();
+  const info = useParityQuery((d) => (d.info ? d.info() : Promise.resolve(null)));
+  const { busy, run, err } = useAction();
   const demoOn = demo.value?.demoMode ?? false;
+  const chain = info.value?.kind === "chain";
+
+  if (chain && !info.value?.isAdmin) {
+    return (
+      <div className="max-w-prose space-y-4">
+        <h1 className="t-display text-3xl text-navy md:text-[3rem]">Dispatch office</h1>
+        <p className="text-navy-2">
+          Dispatch sends admin instructions to the program (demo mode, price shocks, demo clock, rates) and cranks mark, liquidate and settle.
+          It opens only for the protocol admin wallet{info.value?.admin ? <> <span className="t-num text-navy">{info.value.admin.slice(0, 4)}…{info.value.admin.slice(-4)}</span></> : null}.
+        </p>
+        <p className="text-sm text-navy-2">Connect that wallet to continue. The keeper marks, liquidates and settles on its own either way.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="grid grid-cols-1 gap-x-8 gap-y-10 lg:grid-cols-12">
       <div className="min-w-0 space-y-10 lg:col-span-8">
         <div>
           <h1 className="t-display text-3xl text-navy md:text-[3rem]">Dispatch office</h1>
-          <p className="mt-2 max-w-prose text-navy-2">Admin and demo controls for the devnet rehearsal. Every action is labelled with its effect and written to the dispatch log. All actions here are mock.</p>
+          <p className="mt-2 max-w-prose text-navy-2">Admin and demo controls for the devnet rehearsal. Every action is labelled with its effect and written to the dispatch log. {chain ? "Each action is a signed transaction on the program; the log shows its signature." : "All actions here are mock."}</p>
+          {err ? <p role="alert" className="mt-2 text-sm text-red">{err}</p> : null}
         </div>
 
         <Panel title="Demo mode" aside={demoOn ? <DemoChip /> : <span>Off</span>}>
