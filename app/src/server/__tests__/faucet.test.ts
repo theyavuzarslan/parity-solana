@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
 import { Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { clientIp, createFaucet, FAUCET_AMOUNT, FAUCET_WINDOW_MS, IP_LIMIT_PER_WINDOW, NEED_SOL_MESSAGE } from "../faucet";
+import { clientIp, createFaucet, FAUCET_AMOUNT, FAUCET_WINDOW_MS, IP_LIMIT_PER_WINDOW, NEED_SOL_MESSAGE, NOT_CONFIGURED_MESSAGE } from "../faucet";
 
 const key = () => Keypair.generate().publicKey.toBase58();
 const funded = async () => LAMPORTS_PER_SOL; // 1 SOL
@@ -145,5 +145,17 @@ describe("faucet under concurrent bursts", () => {
     resolveFirst(null); // first fails (no SOL) and releases — must not delete the second's slot
     expect((await first).status).toBe(403);
     expect((await f.handle({ owner: key() }, "6.6.6.6")).status).toBe(429);
+  });
+});
+
+describe("faucet without configuration", () => {
+  it("refuses with 503 before touching the network or the limits", async () => {
+    const getLamports = vi.fn(async () => LAMPORTS_PER_SOL);
+    const mintTo = vi.fn(async () => "sig");
+    const f = createFaucet({ mintTo, getLamports, configured: () => false });
+    const r = await f.handle({ owner: Keypair.generate().publicKey.toBase58() }, "7.7.7.7");
+    expect(r).toEqual({ status: 503, body: { error: NOT_CONFIGURED_MESSAGE } });
+    expect(getLamports).not.toHaveBeenCalled();
+    expect(mintTo).not.toHaveBeenCalled();
   });
 });

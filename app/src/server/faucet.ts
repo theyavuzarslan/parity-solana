@@ -41,6 +41,9 @@ export const NEED_SOL_MESSAGE =
   `Get devnet SOL from faucet.solana.com first (at least ${MIN_OWNER_SOL} SOL in this wallet), then ask for test tokens again.`;
 
 /** First hop of x-forwarded-for (the client as seen by the edge), else x-real-ip, else "unknown". */
+export const NOT_CONFIGURED_MESSAGE =
+  "The test-token faucet is not configured on this deployment (no program or faucet key yet).";
+
 export function clientIp(headers: Headers): string {
   const xff = headers.get("x-forwarded-for");
   if (xff) return xff.split(",")[0]!.trim() || "unknown";
@@ -51,6 +54,8 @@ export function clientIp(headers: Headers): string {
 export function createFaucet(deps: {
   mintTo: MintTo;
   getLamports: GetLamports;
+  /** False when the deployment has no faucet key or mints: refuse before any RPC or rate-limit slot. */
+  configured?: () => boolean;
   now?: () => number;
   windowMs?: number;
   globalCapPerHour?: number;
@@ -71,6 +76,9 @@ export function createFaucet(deps: {
 
   return {
     async handle(input: unknown, ip = "unknown"): Promise<FaucetReply> {
+      if (deps.configured && !deps.configured()) {
+        return { status: 503, body: { error: NOT_CONFIGURED_MESSAGE } };
+      }
       const ownerStr = (input as { owner?: unknown } | null)?.owner;
       let owner: PublicKey;
       try {
@@ -144,6 +152,11 @@ export function envGetLamports(): GetLamports {
     const info = await new Connection(rpcUrl(), "confirmed").getAccountInfo(owner, "confirmed");
     return info ? info.lamports : null;
   };
+}
+
+/** True when the env holds everything envMintTo needs. */
+export function envConfigured(): boolean {
+  return !!(process.env["FAUCET_SECRET_KEY"] && process.env["NEXT_PUBLIC_USDC_MINT"] && process.env["NEXT_PUBLIC_USDG_MINT"]);
 }
 
 /** Real minting from env: FAUCET_SECRET_KEY, NEXT_PUBLIC_USDC_MINT, NEXT_PUBLIC_USDG_MINT, RPC. */

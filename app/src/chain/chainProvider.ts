@@ -27,6 +27,7 @@ import { CHAIN, SOL_FAUCET_URL } from "./config";
 import { assignLegs, buildLadderTx, bpsCeil, preflight as preflightLadder, requiredCollateral, type Leg, type OfferView, type Rung } from "./ladder";
 import { pdas, priceFeedPda, code3 } from "./pda";
 import { readOnchainPrices, type PriceReadView } from "./prices";
+import { pruneShocks, type ShockedSlot } from "./shocks";
 import { eventParser, makeProgram, programErrorName, type ParityProgram } from "./program";
 
 const DAY = 86_400;
@@ -92,6 +93,8 @@ export function createChainProvider(opts: ChainOptions): ParityData {
   let live: LiveSnapshot | null = null;
   let log: DispatchEntry[] = [];
   const shocks: Partial<Record<MarketId, number>> = {};
+  /** DemoState slot values each shock wrote; a shock is dropped once its slot no longer holds them. */
+  const shockedSlots: Partial<Record<MarketId, ShockedSlot>> = {};
   const waterfalls = new Map<string, { waterfall?: Waterfall; pnlLong?: number } | null>();
 
   // ---------- snapshot ----------
@@ -136,7 +139,7 @@ export function createChainProvider(opts: ChainOptions): ParityData {
     }));
     return {
       at: Date.now(), pricesAt: Date.now(), relayedAt, cfg,
-      demo: demoRaw.prices.map((p: { a: BN; b: BN; set: boolean }) => ({ a: BigInt(p.a.toString()), b: BigInt(p.b.toString()), set: p.set })),
+      demo: readDemo(demoRaw),
       imBps: new Map(marketsRaw.map(({ account: m }) => [m.id, m.imBps])),
       rates, offers, prices, insurance: { USDC: insUsdc, USDG: insUsdg },
     };
@@ -150,12 +153,20 @@ export function createChainProvider(opts: ChainOptions): ParityData {
     } catch { return null; }
   }
 
-  /** Prices only (debug_price simulation), on their own shorter TTL. */
+  const readDemo = (raw: { prices: { a: BN; b: BN; set: boolean }[] }): Snap["demo"] =>
+    raw.prices.map((p) => ({ a: BigInt(p.a.toString()), b: BigInt(p.b.toString()), set: p.set }));
+
+  /** Prices (debug_price simulation) and the DemoState slots, on their own shorter TTL. The slots
+   *  come along so a price the relay wrote is never labelled by a stale slot (e.g. after a reset). */
   function refreshPrices(s: Snap) {
     if (pricesLoading || loading) return;
-    pricesLoading = Promise.all([readOnchainPrices(program, connection, s.cfg.admin), lastDemoWrite()])
-      .then(([prices, relayedAt]) => {
-        if (snap === s) { snap = { ...s, prices, pricesAt: Date.now(), relayedAt: relayedAt ?? s.relayedAt }; notify(); }
+    pricesLoading = Promise.all([
+      readOnchainPrices(program, connection, s.cfg.admin),
+      lastDemoWrite(),
+      program.account.demoState.fetch(P.demo()).then(readDemo, () => s.demo),
+    ])
+      .then(([prices, relayedAt, demo]) => {
+        if (snap === s) { snap = { ...s, prices, demo, pricesAt: Date.now(), relayedAt: relayedAt ?? s.relayedAt }; notify(); }
       })
       .catch(() => undefined)
       .finally(() => { pricesLoading = null; });
@@ -556,6 +567,9 @@ export function createChainProvider(opts: ChainOptions): ParityData {
     async getWallet() { const { lamports: _l, ...w } = await walletState(); void _l; return w; },
     async getDemo(): Promise<DemoState> {
       const s = await getSnap();
+      // A shock's multiplier only holds while its slot still has the shocked value (relay rewrite,
+      // reset or demo mode off clear it).
+      pruneShocks(shocks, shockedSlots, (id) => (s.cfg.demoMode ? s.demo[chainMeta(id).id] : undefined));
       return { demoMode: s.cfg.demoMode, clockOffsetDays: round2(s.cfg.demoClockOffset / DAY), shocks: { ...shocks } };
     },
     async getDispatchLog() { return [...log]; },
@@ -686,7 +700,7 @@ export function createChainProvider(opts: ChainOptions): ParityData {
           : CHAIN_MARKETS.flatMap((mk): Target[] => (mk.feedAKey === feed ? [{ mk, leg: "a" }] : mk.feedBKey === feed ? [{ mk, leg: "b" }] : []));
         const scale = (x: bigint) => BigInt(Math.round(Number(x) * f));
         const ixs: TransactionInstruction[] = [];
-        const moved: { mk: MarketMeta; before?: number }[] = [];
+        const moved: { mk: MarketMeta; before?: number; a: bigint; b: bigint }[] = [];
         const skipped: string[] = [];
         for (const { mk, leg } of targets) {
           const slot = s.demo[mk.id];
@@ -698,11 +712,19 @@ export function createChainProvider(opts: ChainOptions): ParityData {
           const b2 = mk.feedBKey ? (leg === "b" ? scale(b!) : b!) : 0n;
           ixs.push(await program.methods.setDemoPrice(mk.id, new BN(a2.toString()), new BN(b2.toString()), true)
             .accountsPartial({ config: P.config(), admin: wallet().publicKey, demoState: P.demo() }).instruction());
-          moved.push({ mk, before: pr?.spot });
+          moved.push({ mk, before: pr?.spot, a: a2, b: b2 });
         }
         if (!ixs.length) throw new Error(`No current price for ${market} to shock.`);
         const sig = await send(ixs);
-        for (const { mk } of moved) shocks[mk.symbol as MarketId] = (shocks[mk.symbol as MarketId] ?? 1) * f;
+        for (const { mk, a, b } of moved) {
+          const id = mk.symbol as MarketId;
+          // Compound only onto a shock still in place; a slot the relay rewrote starts from ×1.
+          const prev = shockedSlots[id];
+          const slot = s.demo[mk.id];
+          const compounding = !!prev && !!slot?.set && slot.a === prev.a && slot.b === prev.b;
+          shocks[id] = (compounding ? shocks[id] ?? 1 : 1) * f;
+          shockedSlots[id] = { a, b };
+        }
         await afterWrite();
         const after = (await getSnap()).prices;
         const parts = moved.map(({ mk, before }) => `${mk.symbol} ${before?.toFixed(4) ?? "?"} → ${after.get(mk.id)?.spot.toFixed(4) ?? "?"}`);
@@ -734,6 +756,7 @@ export function createChainProvider(opts: ChainOptions): ParityData {
       async reset() {
         const s = await requireAdmin();
         for (const k of Object.keys(shocks)) delete shocks[k as MarketId];
+        for (const k of Object.keys(shockedSlots)) delete shockedSlots[k as MarketId];
         if (!s.cfg.demoMode) return entry("RESET", "Demo mode is off: no clock or demo prices to reset (the relay turns demo mode back on at its next tick).");
         // Clock back to +0 and every demo price slot cleared (set = false) in one transaction. A
         // cleared slot is the relay's resync marker: its next tick rewrites the reference price.
