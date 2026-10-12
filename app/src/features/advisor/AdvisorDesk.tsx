@@ -6,7 +6,6 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useState, type ReactNode } from "react";
 import { useParity, useParityQuery } from "@/data/provider";
 import { marketConfig } from "@/data/markets";
-import { usdPerQuote } from "@/data/pricing";
 import type { LadderQuote, LadderRequest, MarketQuote, Mint, Position, Preflight, Rate, WalletState } from "@/data/types";
 import { advise, scenarioSeries, type Advice } from "@/lib/advise";
 import {
@@ -142,7 +141,8 @@ export function AdvisorDesk() {
 
   const lockedUsdTotal = Object.values(lockedQ.value ?? {}).reduce((a, b) => a + b, 0);
   const m = marketConfig(pair.market);
-  const lockedQuoteTotal = quote ? lockedUsdTotal / usdPerQuote(pair.market, quote.spot) : 0;
+  // USD → quote currency at upq (USD per quote unit): 1 / USD/TRY for every lira market, crosses included.
+  const lockedQuoteTotal = quote ? lockedUsdTotal / quote.upq : 0;
 
   const summary = complete && inputs ? (
     <Summary
@@ -723,7 +723,7 @@ function Mechanism({ advice, quote, rates }: { advice: Advice; quote: MarketQuot
 
 function Scenarios({ advice, quote, lq, monthly, months }: { advice: Advice; quote: MarketQuote; lq: LadderQuote | null; monthly: number; months: number }) {
   const m = marketConfig(quote.id);
-  const perUnitUsd = quote.spot * usdPerQuote(quote.id, quote.spot);
+  const perUnitUsd = quote.spot * quote.upq; // USD per base unit
   const totalUnits = (monthly * months) / perUnitUsd;
   const hedgedUsd = lq?.rungs.reduce((a, r) => a + r.notionalUsd, 0) ?? 0;
   const hedgedUnits = hedgedUsd / perUnitUsd;

@@ -16,7 +16,7 @@ import { MARKETS as CHAIN_MARKETS, RATES as SHARED_RATES, type MarketMeta } from
 import { resolvePayout } from "shared/src/payout";
 import { MARKETS, marketConfig, type FeedKey } from "@/data/markets";
 import { createMockProvider } from "@/data/mockProvider";
-import { carryPct, forwardFor, isPaused, marketStatus, strikeFor } from "@/data/pricing";
+import { carryPct, forwardFor, isPaused, marketStatus, strikeFor, upqFromFeeds } from "@/data/pricing";
 import { fetchLive, type LiveSnapshot } from "@/data/pyth";
 import type {
   DemoState, DispatchEntry, FaucetResult, FeedHealth, LadderQuote, LadderRequest, LockResult, MarketId, MarketQuote,
@@ -151,7 +151,7 @@ export function createChainProvider(opts: ChainOptions): ParityData {
   const tokenProgramFor = (s: Snap, mint: PublicKey) => (mint.equals(s.cfg.usdgMint) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID);
 
   // ---------- quotes ----------
-  function quoteFor(s: Snap, id: MarketId): MarketQuote & { upq: number } {
+  function quoteFor(s: Snap, id: MarketId): MarketQuote {
     const ui = marketConfig(id);
     const meta = chainMeta(id);
     const pr = s.prices.get(meta.id);
@@ -165,10 +165,12 @@ export function createChainProvider(opts: ChainOptions): ParityData {
       const feeds = ui.feeds as FeedKey[];
       const seedQ = seed.peek!.markets().find((q) => q.id === id)!;
       const have = feeds.every((f) => lp[f]);
-      spot = have ? ui.compose(Object.fromEntries(Object.entries(lp).map(([k, v]) => [k, v!.price])) as Record<FeedKey, number>) : seedQ.spot;
+      const feedPx = Object.fromEntries(Object.entries(lp).map(([k, v]) => [k, v!.price])) as Record<FeedKey, number>;
+      spot = have ? ui.compose(feedPx) : seedQ.spot;
       source = have ? (feeds.some((f) => lp[f]!.source === "ecb-ref") ? "ecb-ref" : "pyth") : seedQ.source === "demo-override" ? "demo-static" : seedQ.source;
       publishTime = have ? Math.min(...feeds.map((f) => lp[f]!.publishTime)) : seedQ.publishTime;
-      upq = ui.quote === "USD" ? 1 : 1 / spot;
+      // USD per quote unit from the FEEDS (1 / USD/TRY for EUR/TRY, GAU/TRY …), never 1 / the cross.
+      upq = have ? upqFromFeeds(id, feedPx) : seedQ.upq;
     }
     const status = marketStatus({ source, publishTime, nowSec: Math.floor(Date.now() / 1000) });
     const forwards = Object.fromEntries(TENORS.map((t) => [t, forwardFor(id, spot, s.rates, t)])) as Record<Tenor, number>;
@@ -179,7 +181,7 @@ export function createChainProvider(opts: ChainOptions): ParityData {
       carryPct: carryPct(id, s.rates), im: (s.imBps.get(meta.id) ?? meta.imBps) / 10_000, bestSpreadBps: best, upq,
     };
   }
-  const allQuotes = (s: Snap) => MARKETS.map((m) => { const { upq: _u, ...q } = quoteFor(s, m.id); void _u; return q; });
+  const allQuotes = (s: Snap) => MARKETS.map((m) => quoteFor(s, m.id));
 
   // ---------- wallet ----------
   async function walletState() {

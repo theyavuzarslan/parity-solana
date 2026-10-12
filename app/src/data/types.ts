@@ -46,6 +46,11 @@ export interface MarketQuote {
   im: number;
   /** tightest demo maker spread on this market, bps (null = no offer) */
   bestSpreadBps: number | null;
+  /**
+   * USD per one unit of the quote currency at this spot (program: quote_conv). 1 for USD quotes;
+   * 1 / USD/TRY for USD/TRY, EUR/TRY, GBP/TRY and GAU/TRY alike. Quantity = notional / (spot × upq).
+   */
+  upq: number;
 }
 
 export interface Rate {

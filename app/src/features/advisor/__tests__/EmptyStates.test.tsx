@@ -37,7 +37,7 @@ describe("advisor empty states", () => {
   });
 
   it("D3 markets row: CLOSED with the reopening time", () => {
-    const q: MarketQuote = { id: "USD/TRY", group: "Lira", base: "USD", quote: "TRY", spot: 49.17, source: "pyth", publishTime: 1_791_800_000, status: "CLOSED", forwards: { 30: 50.6, 90: 53.4, 180: 57.3 }, carryPct: 35.75, im: 0.1, bestSpreadBps: 25 };
+    const q: MarketQuote = { id: "USD/TRY", group: "Lira", base: "USD", quote: "TRY", spot: 49.17, source: "pyth", publishTime: 1_791_800_000, status: "CLOSED", forwards: { 30: 50.6, 90: 53.4, 180: 57.3 }, carryPct: 35.75, im: 0.1, bestSpreadBps: 25, upq: 1 / 49.17 };
     render(<table><tbody><MarketRow q={q} /></tbody></table>);
     expect(screen.getByText("CLOSED")).toBeInTheDocument();
     expect(screen.getByText(/FX reopens Sunday 22:00 UTC/)).toBeInTheDocument();

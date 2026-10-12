@@ -6,7 +6,7 @@
  * hard reload) — the chain provider replaces all of it with devnet accounts.
  */
 import { DEMO_ONLY_FEEDS, DEMO_SPOTS, FEEDS, MARKETS, marketConfig, PROTOCOL, refDateToSec, SEED_RATES, SEED_REF_DATE, type FeedKey } from "./markets";
-import { carryPct, forwardFor, isPaused, marketStatus, pnlUsd, strikeFor, usdPerQuote } from "./pricing";
+import { carryPct, forwardFor, isPaused, marketStatus, pnlUsd, strikeFor, upqFromFeeds } from "./pricing";
 import { fetchLive, type LiveSnapshot } from "./pyth";
 import type {
   DemoState, DispatchEntry, FaucetResult, FeedHealth, LadderQuote, LadderRequest, LockResult,
@@ -78,6 +78,13 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
   const startSec = Math.floor(realNow() / 1000);
   let rates: Rate[] = SEED_RATES.map((r) => ({ ...r, updatedAt: startSec }));
   let demo: DemoState = { demoMode: opts.demoMode ?? false, clockOffsetDays: 0, shocks: {} };
+  // Dispatch shocks, like the chain provider: a single-feed market shocks its FEED, so every market
+  // that uses it moves (USD/TRY also moves EUR/TRY, GBP/TRY and GAU/TRY); a cross shocks only itself.
+  let feedShocks: Partial<Record<FeedKey, number>> = {};
+  let crossShocks: Partial<Record<MarketId, number>> = {};
+  const shockOf = (id: MarketId) => marketConfig(id).feeds.reduce((a, f) => a * (feedShocks[f] ?? 1), crossShocks[id] ?? 1);
+  const effectiveShocks = (): DemoState["shocks"] =>
+    Object.fromEntries(MARKETS.map((m) => [m.id, shockOf(m.id)]).filter(([, v]) => v !== 1));
   // Seeded synchronously: ECB reference rates of SEED_REF_DATE for FX (REF), metals stay demo.
   const seedPrices = Object.fromEntries(
     (Object.keys(FEEDS) as FeedKey[])
@@ -155,14 +162,18 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
 
   function quoteFor(id: MarketId): MarketQuote {
     const m = marketConfig(id);
-    const { spots, publish, src } = feedSpots();
+    const { spots: raw, publish, src } = feedSpots();
+    const spots = demo.demoMode
+      ? (Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v * (feedShocks[k as FeedKey] ?? 1)])) as Record<FeedKey, number>)
+      : raw;
     let spot = m.compose(spots);
+    const upq = upqFromFeeds(id, spots);
     const pubs = m.feeds.map((f) => publish[f]);
     const srcs = m.feeds.map((f) => src[f]);
     let source: SpotSource;
     let publishTime: number;
     if (demo.demoMode) {
-      spot *= demo.shocks[id] ?? 1;
+      spot *= crossShocks[id] ?? 1;
       source = "demo-override";
       publishTime = nowSec();
     } else if (srcs.some((x) => x === null)) {
@@ -179,7 +190,7 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
     const status = opts.forceStatus?.[id] ?? marketStatus({ source, publishTime, nowSec: Math.floor(realNow() / 1000) });
     const forwards = Object.fromEntries(TENORS.map((t) => [t, forwardFor(id, spot, rates, t)])) as Record<Tenor, number>;
     const best = offers.filter((o) => o.market === id).reduce<number | null>((acc, o) => (acc === null || o.spreadBps < acc ? o.spreadBps : acc), null);
-    return { id, group: m.group, base: m.base, quote: m.quote, spot, source, publishTime, status, forwards, carryPct: carryPct(id, rates), im: m.im, bestSpreadBps: best };
+    return { id, group: m.group, base: m.base, quote: m.quote, spot, source, publishTime, status, forwards, carryPct: carryPct(id, rates), im: m.im, bestSpreadBps: best, upq };
   }
 
   // ---------- Positions ----------
@@ -198,7 +209,9 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
         imUsd: im, marginUsd: im, closedFraction: 0, breachCount: 0, demo: true, ...p,
       } as InternalPosition;
     };
-    const withQty = (p: InternalPosition, spot: number) => ({ ...p, quantity: p.notionalUsd / (spot * usdPerQuote(p.market, spot)) });
+    // Unshocked USD per quote unit at load (1 / USD/TRY for every lira market, crosses included).
+    const upqOf = (id: MarketId) => upqFromFeeds(id, feedSpots().spots);
+    const withQty = (p: InternalPosition, spot: number) => ({ ...p, quantity: p.notionalUsd / (spot * upqOf(p.market)) });
 
     // Strikes are set so the marked PnL lands where the story needs it.
     const fwd = (id: MarketId, spot: number, days: number) => forwardFor(id, spot, rates, days);
@@ -208,15 +221,15 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
     // 2 · MARGIN CALL: exporter short EUR/TRY; euro rallied, equity ≈ 40% of IM.
     const p2base = mk({ market: "EUR/TRY", side: "short", notionalUsd: 2_000, tenorDays: 60, status: "Called", strike: 0 }, 20, "0002");
     const p2 = withQty(p2base, eurtry);
-    // long PnL needed: user short loses 120 → long gains 120: Q(F−K)/S = 120 → K = F − 120·S/Q
+    // long PnL needed: user short loses 120 → long gains 120: Q(F−K)·upq = 120 → K = F − 120/(Q·upq)
     const f2 = fwd("EUR/TRY", eurtry, 40);
-    p2.strike = f2 - (120 * eurtry) / p2.quantity;
+    p2.strike = f2 - 120 / (p2.quantity * upqOf("EUR/TRY"));
     // 3 · PARTIAL 30%: importer long USD/CNH, 30% closed by the crank, rest still under water.
     const cnh = baseSpot("USD/CNH");
     const p3 = withQty(mk({ market: "USD/CNH", side: "long", notionalUsd: 1_400, tenorDays: 90, status: "PartiallyLiquidated", closedFraction: 0.3, strike: 0, mint: "USDG" }, 45, "0003"), cnh);
     p3.imUsd = round2(p3.notionalUsd * 0.03);
     p3.marginUsd = round2(p3.imUsd * 0.62);
-    p3.strike = fwd("USD/CNH", cnh, 45) + (p3.imUsd * 0.25 * cnh) / p3.quantity;
+    p3.strike = fwd("USD/CNH", cnh, 45) + (p3.imUsd * 0.25) / (p3.quantity * upqOf("USD/CNH"));
     // 4 · VOID: freelancer short USD/TRY $3,000 caught by a 12% overnight gap.
     // Owed 412.50 = loser margin 300.00 → insurance 90.00 → winner haircut 22.50.
     const p4 = withQty(mk({ market: "USD/TRY", side: "short", notionalUsd: 3_000, tenorDays: 90, status: "Liquidated", strike: 0, mint: "USDG" }, 50, "0004"), usdtry);
@@ -229,7 +242,7 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
     const p5 = withQty(mk({ market: "USD/TRY", side: "short", notionalUsd: 500, tenorDays: 30, status: "Settled", strike: 0 }, 32, "0005"), usdtry);
     p5.strike = usdtry * 1.0081;
     p5.finalMark = usdtry;
-    p5.finalPnlUsd = round2(pnlUsd("USD/TRY", "short", p5.quantity, p5.strike, usdtry));
+    p5.finalPnlUsd = round2(pnlUsd("short", p5.quantity, p5.strike, usdtry, upqOf("USD/TRY")));
     p5.marginUsd = 0;
     return [p1, p2, p3, p4, p5];
   }
@@ -251,7 +264,7 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
   function present(p: InternalPosition): Position {
     const terminal = p.status === "Settled" || p.status === "Liquidated";
     const mark = terminal ? (p.finalMark ?? p.strike) : markOf(p);
-    const pnl = terminal ? (p.finalPnlUsd ?? 0) : round2(pnlUsd(p.market, p.side, p.quantity, p.strike, mark));
+    const pnl = terminal ? (p.finalPnlUsd ?? 0) : round2(pnlUsd(p.side, p.quantity, p.strike, mark, quoteFor(p.market).upq));
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { breachCount, finalMark, finalPnlUsd, history, ...rest } = p;
     return { ...rest, pnlUsd: pnl, markPrice: mark };
@@ -279,7 +292,7 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
       const spreadBps = best?.spreadBps ?? 0;
       const strike = strikeFor(forward, req.side, spreadBps);
       const notionalUsd = r.amount;
-      const qty = notionalUsd / (q.spot * usdPerQuote(req.market, q.spot));
+      const qty = notionalUsd / (q.spot * q.upq);
       return {
         ...r, forward, strike, notionalUsd, spreadBps, offerId: best?.id ?? null,
         marginUsd: ceil2(notionalUsd * q.im),
@@ -321,7 +334,7 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
       return [...visible()].sort((a, b) => b.openedAt - a.openedAt).map(present);
     },
     async getWallet() { return { ...wallet, balances: { ...wallet.balances } }; },
-    async getDemo() { return { ...demo, shocks: { ...demo.shocks } }; },
+    async getDemo() { return { ...demo, shocks: effectiveShocks() }; },
     async getDispatchLog() { return [...log]; },
     async getFeedHealth(): Promise<FeedHealth> {
       refreshLive();
@@ -370,7 +383,7 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
         const no = String(counter).padStart(4, "0");
         return {
           id: `pos-${no}`, no, market: req.market, side: req.side, notionalUsd: r.notionalUsd,
-          quantity: r.notionalUsd / (q.spot * usdPerQuote(req.market, q.spot)), strike: r.strike,
+          quantity: r.notionalUsd / (q.spot * q.upq), strike: r.strike,
           openedAt: t0 + counter, maturity: r.maturity, tenorDays: r.tenorDays, mint: req.mint, status: "Open",
           imUsd: r.marginUsd, marginUsd: r.marginUsd, closedFraction: 0, breachCount: 0, demo: true,
         };
@@ -418,9 +431,19 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
       async shock(market, pct) {
         if (!demo.demoMode) return done(entry(`SHOCK ${market} ${pct > 0 ? "+" : ""}${pct}%`, "Refused — demo mode is off."));
         const prev = quoteFor(market).spot;
-        demo = { ...demo, shocks: { ...demo.shocks, [market]: (demo.shocks[market] ?? 1) * (1 + pct / 100) } };
+        const f = 1 + pct / 100;
+        const feeds = marketConfig(market).feeds;
+        let moved: MarketId[] = [market];
+        if (feeds.length === 1) {
+          feedShocks = { ...feedShocks, [feeds[0]!]: (feedShocks[feeds[0]!] ?? 1) * f };
+          moved = MARKETS.filter((m) => m.feeds.includes(feeds[0]!)).map((m) => m.id);
+        } else {
+          crossShocks = { ...crossShocks, [market]: (crossShocks[market] ?? 1) * f };
+        }
+        demo = { ...demo, shocks: effectiveShocks() };
         const next = quoteFor(market).spot;
-        return done(entry(`SHOCK ${market} ${pct > 0 ? "+" : "−"}${Math.abs(pct)}%`, `Spot ${prev.toFixed(4)} → ${next.toFixed(4)}`));
+        const also = moved.filter((x) => x !== market);
+        return done(entry(`SHOCK ${market} ${pct > 0 ? "+" : "−"}${Math.abs(pct)}%`, `Spot ${prev.toFixed(4)} → ${next.toFixed(4)}${also.length ? ` · also moves ${also.join(", ")}` : ""}`));
       },
       async advanceClock(days) {
         if (!demo.demoMode) return done(entry(`CLOCK +${days}D`, "Refused — demo mode is off."));
@@ -490,9 +513,10 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
         const t = nowSec();
         for (const p of visible()) {
           if (p.status === "Settled" || p.status === "Liquidated" || p.maturity > t) continue;
-          const spot = quoteFor(p.market).spot;
+          const sq = quoteFor(p.market);
+          const spot = sq.spot;
           p.finalMark = spot;
-          p.finalPnlUsd = round2(pnlUsd(p.market, p.side, p.quantity, p.strike, spot));
+          p.finalPnlUsd = round2(pnlUsd(p.side, p.quantity, p.strike, spot, sq.upq));
           wallet.balances[p.mint] = round2(wallet.balances[p.mint] + Math.max(0, p.marginUsd + p.finalPnlUsd));
           p.marginUsd = 0;
           p.status = "Settled";
@@ -502,6 +526,8 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
       },
       async reset() {
         demo = { demoMode: false, clockOffsetDays: 0, shocks: {} };
+        feedShocks = {};
+        crossShocks = {};
         rates = SEED_RATES.map((r) => ({ ...r, updatedAt: nowSec() }));
         positions = null;
         return done(entry("RESET", "Back to the load state: demo mode off, clock, rates and demo coupons restored."));

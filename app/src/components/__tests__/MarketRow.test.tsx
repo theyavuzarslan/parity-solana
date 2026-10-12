@@ -7,7 +7,7 @@ import type { MarketQuote } from "@/data/types";
 const now = 1_791_800_000;
 const quote = (over: Partial<MarketQuote>): MarketQuote => ({
   id: "USD/TRY", group: "Lira", base: "USD", quote: "TRY", spot: 49.17, source: "pyth", publishTime: now,
-  status: "OPEN", forwards: { 30: 50.6, 90: 53.4, 180: 57.3 }, carryPct: 35.75, im: 0.1, bestSpreadBps: 25, ...over,
+  status: "OPEN", forwards: { 30: 50.6, 90: 53.4, 180: 57.3 }, carryPct: 35.75, im: 0.1, bestSpreadBps: 25, upq: 1 / 49.17, ...over,
 });
 
 describe("market status", () => {
