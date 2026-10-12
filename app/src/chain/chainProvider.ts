@@ -561,8 +561,9 @@ export function createChainProvider(opts: ChainOptions): ParityData {
         }))
         .filter((o) => !market || o.market === market);
     },
-    async getPositions() {
-      const s = await getSnap();
+    async getPositions(opts) {
+      if (opts?.fresh) positionsCache.clear();
+      const s = await getSnap(!!opts?.fresh);
       return (await present(s, await myPositionAccounts())).sort((a, b) => b.openedAt - a.openedAt);
     },
     async getWallet() { const { lamports: _l, ...w } = await walletState(); void _l; return w; },

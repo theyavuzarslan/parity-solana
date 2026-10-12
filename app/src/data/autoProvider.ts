@@ -35,7 +35,7 @@ export function createAutoProvider(): ParityData {
     getMarkets: () => d().getMarkets(),
     getRates: () => d().getRates(),
     getOffers: (m) => d().getOffers(m),
-    getPositions: () => d().getPositions(),
+    getPositions: (o) => d().getPositions(o),
     getWallet: () => d().getWallet(),
     getDemo: () => d().getDemo(),
     getDispatchLog: () => d().getDispatchLog(),

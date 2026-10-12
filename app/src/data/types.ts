@@ -238,7 +238,8 @@ export interface ParityData {
   getMarkets(): Promise<MarketQuote[]>;
   getRates(): Promise<Rate[]>;
   getOffers(market?: MarketId): Promise<Offer[]>;
-  getPositions(): Promise<Position[]>;
+  /** `fresh`: bypass caches (and the hidden-tab guard) — used around signing to see what landed. */
+  getPositions(opts?: { fresh?: boolean }): Promise<Position[]>;
   getWallet(): Promise<WalletState>;
   getDemo(): Promise<DemoState>;
   getDispatchLog(): Promise<DispatchEntry[]>;

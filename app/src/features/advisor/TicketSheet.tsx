@@ -120,40 +120,63 @@ export function TicketSheet({ req, lq: lq0, quote: q0, anchor, validForMs = QUOT
   const seated = lq.rungs.every((r) => r.offerId);
   const canSign = phase === "quote" && remainingMs > 0 && !!pf?.ok && seated;
 
+  /** an earlier attempt that failed in a way that may still confirm: checked again before any new signature */
+  const pending = useRef<{ before: Set<string>; lq: LadderQuote } | null>(null);
+  const [unconfirmed, setUnconfirmed] = useState(false);
+
+  const issueFound = (landed: Position[], signedLq: LadderQuote) => {
+    pending.current = null;
+    setUnconfirmed(false);
+    const res = { signature: "", positions: landed };
+    setLq(signedLq);
+    setResult(res);
+    setPhase("issued");
+    onIssued?.(res, signedLq);
+  };
+
   const sign = async () => {
     if (action.current) return; // double click, or a re-quote already started
     if (Date.now() >= expiresAt) { void reprice(); return; } // never sign a stale quote
     if (!canSign) return;
     action.current = "sign";
-    setPhase("signing");
     setError(null);
-    let before: Set<string> | null = null;
     try {
-      before = new Set((await data.getPositions()).map((p) => p.id));
-      // The provider re-plans right before signing and refuses (QuoteChangedError) if anything differs.
-      const res = await data.lockLadder(req, lq);
-      setResult(res);
-      setPhase("issued");
-      onIssued?.(res, lq);
-    } catch (e) {
-      if (isQuoteChanged(e)) {
-        try { await showQuote(e.fresh, "changed"); } catch { setError("The quote changed and could not be re-priced."); setPhase("failed"); }
-      } else {
+      // A previous attempt may have landed late: look first (fresh read), never lock twice.
+      if (pending.current) {
+        setPhase("checking");
+        const late = await findLanded(data, pending.current.lq, pending.current.before).catch(() => undefined);
+        if (late === undefined) { setError("Could not check your wallet. Your previous attempt may still confirm — check Wallet before signing again."); setPhase("failed"); return; }
+        if (late) { issueFound(late, pending.current.lq); return; }
+      }
+      setPhase("signing");
+      const before = new Set((await data.getPositions({ fresh: true })).map((p) => p.id));
+      try {
+        // The provider re-plans right before signing and refuses (QuoteChangedError) if anything differs.
+        const res = await data.lockLadder(req, lq);
+        pending.current = null;
+        setUnconfirmed(false);
+        setResult(res);
+        setPhase("issued");
+        onIssued?.(res, lq);
+      } catch (e) {
+        if (isQuoteChanged(e)) {
+          try { await showQuote(e.fresh, "changed"); } catch { setError("The quote changed and could not be re-priced."); setPhase("failed"); }
+          return;
+        }
         const msg = e instanceof Error ? e.message : "The transaction failed.";
-        if (before && mayHaveLanded(msg)) {
+        if (mayHaveLanded(msg)) {
           setPhase("checking");
-          const landed = await findLanded(data, lq, before).catch(() => []);
-          if (landed.length) {
-            const res = { signature: "", positions: landed };
-            setResult(res);
-            setPhase("issued");
-            onIssued?.(res, lq);
-            return;
-          }
+          const landed = await findLanded(data, lq, before).catch(() => null);
+          if (landed) { issueFound(landed, lq); return; }
+          pending.current = { before, lq };
+          setUnconfirmed(true);
         }
         setError(msg);
         setPhase("failed");
       }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not read your wallet before signing.");
+      setPhase("failed");
     } finally {
       action.current = null;
     }
@@ -316,6 +339,12 @@ export function TicketSheet({ req, lq: lq0, quote: q0, anchor, validForMs = QUOT
           {failed && error ? (
             <p className="text-sm text-red" role="alert" data-testid="ticket-error">{error}</p>
           ) : null}
+          {unconfirmed && (failed || phase === "quote") ? (
+            <p className="text-sm text-navy" role="status" data-testid="maybe-pending">
+              Your previous attempt may still confirm — check <Link href="/wallet" className="underline underline-offset-4">Wallet</Link> before signing again.
+              Sign &amp; lock checks your wallet first.
+            </p>
+          ) : null}
         </div>
 
         <footer className="mt-5 border-t-2 border-navy pt-4">
@@ -389,10 +418,30 @@ export function mayHaveLanded(msg: string): boolean {
   return true;
 }
 
-/** New positions on this market/side that were not there before signing and match a rung. */
-async function findLanded(data: ParityData, lq: LadderQuote, before: Set<string>): Promise<Position[]> {
-  const all = await data.getPositions();
-  return all.filter((p) => !before.has(p.id) && p.market === lq.market && p.side === lq.side && lq.rungs.some((r) => r.tenorDays === p.tenorDays && Math.abs(r.notionalUsd - p.notionalUsd) < 0.01));
+const DAY_SEC = 86_400;
+
+/**
+ * The positions an attempt created, or null: every rung must match exactly one new position
+ * (market, side, mint, tenor, notional within $0.01, strike within 1e-6 relative, maturity within ±1 day).
+ */
+export function matchLanded(lq: LadderQuote, candidates: Position[]): Position[] | null {
+  const used = new Set<string>();
+  const out: Position[] = [];
+  for (const r of lq.rungs) {
+    const p = candidates.find((c) => !used.has(c.id) && c.market === lq.market && c.side === lq.side && c.mint === lq.mint
+      && c.tenorDays === r.tenorDays && Math.abs(c.notionalUsd - r.notionalUsd) < 0.01
+      && Math.abs(c.strike - r.strike) <= 1e-6 * Math.abs(r.strike) && Math.abs(c.maturity - r.maturity) <= DAY_SEC);
+    if (!p) return null;
+    used.add(p.id);
+    out.push(p);
+  }
+  return out;
+}
+
+/** Fresh read (no cache): the new positions of this attempt, all rungs matched one-to-one, or null. */
+async function findLanded(data: ParityData, lq: LadderQuote, before: Set<string>): Promise<Position[] | null> {
+  const all = await data.getPositions({ fresh: true });
+  return matchLanded(lq, all.filter((p) => !before.has(p.id)));
 }
 
 function QuoteFacts({ lq, r, quote, single }: { lq: LadderQuote; r: RungQuote; quote: MarketQuote; single: boolean }) {

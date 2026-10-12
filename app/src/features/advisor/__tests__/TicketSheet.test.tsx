@@ -6,7 +6,7 @@ import { createMockProvider } from "@/data/mockProvider";
 import type { LadderQuote, LadderRequest, LockResult, MarketId, ParityData, Position, ProviderInfo } from "@/data/types";
 import { QuoteChangedError, quoteDrift } from "@/data/quoteDrift";
 import { AdvisorDesk } from "../AdvisorDesk";
-import { issuedRows, PREVIEW_SIG_LABEL, TicketSheet } from "../TicketSheet";
+import { issuedRows, matchLanded, PREVIEW_SIG_LABEL, TicketSheet } from "../TicketSheet";
 import { walkCheckIn } from "./walk";
 
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams("persona=freelancer") }));
@@ -268,6 +268,61 @@ describe("issued ticket and unknown failures", () => {
     lockSpy.mockRejectedValueOnce(new Error("User rejected the request."));
     await user.click(screen.getByRole("button", { name: /sign & lock/i }));
     expect(await screen.findByRole("button", { name: /try again/i })).toHaveFocus();
+  });
+});
+
+describe("did the lock land?", () => {
+  const lq2 = { market: "USD/TRY", side: "short", mint: "USDC", rungs: [30, 60].map((t, i) => ({ month: i + 1, tenorDays: t, amount: 100, forward: 1, strike: 50 + i, notionalUsd: 100, marginUsd: 10, feeUsd: 0.1, spreadBps: 25, offerId: "o", maturity: 1_000_000 + t * 86_400, lockedQuote: 1 })), totalMarginUsd: 20, totalFeeUsd: 0.2, requiredUsd: 20.2, openFeeBps: 10, imPct: 10 } as LadderQuote;
+  const pos = (id: string, tenorDays: number, strike: number, extra: Partial<Position> = {}) => ({ id, no: id, market: "USD/TRY", side: "short", notionalUsd: 100, quantity: 2, strike, openedAt: 1, maturity: 1_000_000 + tenorDays * 86_400, tenorDays, mint: "USDC", status: "Open", imUsd: 10, marginUsd: 10, pnlUsd: 0, closedFraction: 0, markPrice: 1, demo: true, ...extra }) as Position;
+
+  it("matchLanded needs a one-to-one match for every rung", () => {
+    expect(matchLanded(lq2, [pos("b", 60, 51), pos("x", 90, 52), pos("a", 30, 50)])?.map((p) => p.id)).toEqual(["a", "b"]);
+    expect(matchLanded(lq2, [pos("a", 30, 50)])).toBeNull(); // one rung missing
+    expect(matchLanded(lq2, [pos("a", 30, 50), pos("b", 60, 51 * (1 + 1e-5))])).toBeNull(); // strike off
+    expect(matchLanded(lq2, [pos("a", 30, 50), pos("b", 60, 51, { maturity: 1_000_000 + 62 * 86_400 })])).toBeNull(); // maturity off by 2 days
+    expect(matchLanded(lq2, [pos("a", 30, 50), pos("b", 60, 51, { mint: "USDG" })])).toBeNull();
+    expect(matchLanded(lq2, [pos("a", 30, 50), pos("b", 60, 51, { side: "long" })])).toBeNull();
+    expect(matchLanded(lq2, [pos("a", 30, 50), pos("b", 60, 51, { notionalUsd: 100.5 })])).toBeNull();
+  });
+
+  it("reads positions fresh right before signing and after an unknown failure", async () => {
+    const user = userEvent.setup();
+    const { data, lockSpy } = await setup();
+    const getSpy = vi.spyOn(data, "getPositions");
+    lockSpy.mockRejectedValueOnce(new Error("Transaction was not confirmed in 30 seconds."));
+    await user.click(screen.getByRole("button", { name: /sign & lock/i }));
+    await screen.findByRole("button", { name: /try again/i });
+    expect(getSpy).toHaveBeenCalledTimes(2);
+    for (const c of getSpy.mock.calls) expect(c[0]).toEqual({ fresh: true });
+  });
+
+  it("an unrelated new position does not count as landed: NOT ISSUED with the may-still-confirm copy", async () => {
+    const user = userEvent.setup();
+    const { data, lockSpy, req } = await setup();
+    // while our attempt times out, a different ladder (90 days) lands on the same market and side
+    const other = { ...req, rungs: [{ month: 3, tenorDays: 90, amount: 500 }] };
+    lockSpy.mockImplementationOnce(async () => { await data.lockLadder(other); throw new Error("Transaction was not confirmed in 30 seconds."); });
+    await user.click(screen.getByRole("button", { name: /sign & lock/i }));
+    expect(await screen.findByTestId("ticket-error")).toHaveTextContent(/not confirmed/);
+    expect(screen.getByTestId("maybe-pending")).toHaveTextContent(/previous attempt may still confirm — check Wallet before signing again/);
+    expect((await data.getPositions()).some((p) => p.tenorDays === 90)).toBe(true); // the unrelated lock did land
+  });
+
+  it("a late landing is found before signing again: shown as issued, no second lock", async () => {
+    const user = userEvent.setup();
+    const { data, lockSpy, req, lq } = await setup();
+    lockSpy.mockRejectedValueOnce(new Error("Transaction was not confirmed in 30 seconds."));
+    await user.click(screen.getByRole("button", { name: /sign & lock/i }));
+    await screen.findByRole("button", { name: /try again/i });
+    const n0 = (await data.getPositions()).length;
+    await data.lockLadder(req, lq); // the first attempt confirms late
+    await user.click(screen.getByRole("button", { name: /try again/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /sign & lock/i })).toBeEnabled());
+    expect(screen.getByTestId("maybe-pending")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /sign & lock/i }));
+    expect(await screen.findByRole("dialog", { name: /your ticket/i })).toBeInTheDocument();
+    expect((await data.getPositions()).length).toBe(n0 + 1);
+    expect(screen.getByTestId("sig-missing")).toBeInTheDocument();
   });
 });
 
