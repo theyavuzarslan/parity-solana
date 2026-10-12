@@ -150,6 +150,7 @@ function SetupCard() {
   const [mint, setMint] = useState<Mint>("USDC");
   const [state, setState] = useState<"idle" | "busy" | "done" | "error">("idle");
   const [solState, setSolState] = useState<"idle" | "busy" | "done" | "error">("idle");
+  const [solErr, setSolErr] = useState<string | null>(null);
   const connected = wallet.value?.connected;
   return (
     <CarbonCopy
@@ -188,10 +189,10 @@ function SetupCard() {
               loading={solState === "busy"}
               loadingLabel="Requesting…"
               success={solState === "done" ? "SENT" : null}
-              error={solState === "error" ? "Airdrop failed — try again." : null}
+              error={solState === "error" ? (solErr ?? "Airdrop failed — try again.") : null}
               onClick={async () => {
                 setSolState("busy");
-                try { await data.requestSol(); setSolState("done"); } catch { setSolState("error"); }
+                try { await data.requestSol(); setSolState("done"); } catch (e) { setSolErr(e instanceof Error ? e.message : null); setSolState("error"); }
               }}
             >
               Get 1 test SOL

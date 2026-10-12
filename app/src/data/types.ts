@@ -215,6 +215,8 @@ export interface ProviderInfo {
   admin: string | null;
   /** connected wallet == config.admin (mock: always true, Dispatch is open) */
   isAdmin: boolean;
+  /** insurance fund balances per collateral mint, test USD (chain only) */
+  insurance?: Record<Mint, number>;
 }
 
 export interface ParityData {

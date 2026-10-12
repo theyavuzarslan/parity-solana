@@ -55,6 +55,7 @@ type Snap = {
   rates: Rate[];
   offers: OfferView[];
   prices: Map<number, PriceReadView>;
+  insurance: Record<Mint, number>;
 };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type PositionAcct = any;
@@ -101,7 +102,14 @@ export function createChainProvider(opts: ChainOptions): ParityData {
         minNotional: BigInt(cfgRaw.params.minNotional.toString()),
       },
     };
-    const prices = await readOnchainPrices(program, connection, cfg.admin).catch(() => new Map<number, PriceReadView>());
+    const insBal = async (mint: PublicKey) => {
+      try { return Number((await connection.getTokenAccountBalance(P.insurance(mint), "confirmed")).value.uiAmount ?? 0); } catch { return 0; }
+    };
+    const [prices, insUsdc, insUsdg] = await Promise.all([
+      readOnchainPrices(program, connection, cfg.admin).catch(() => new Map<number, PriceReadView>()),
+      insBal(cfg.usdcMint),
+      insBal(cfg.usdgMint),
+    ]);
     if (prices.size < CHAIN_MARKETS.length && (!live || Date.now() / 1000 - live.checkedAt > 30)) {
       live = await fetchLive().catch(() => null);
     }
@@ -119,12 +127,14 @@ export function createChainProvider(opts: ChainOptions): ParityData {
       at: Date.now(), cfg,
       demo: demoRaw.prices.map((p: { a: BN; b: BN; set: boolean }) => ({ a: BigInt(p.a.toString()), b: BigInt(p.b.toString()), set: p.set })),
       imBps: new Map(marketsRaw.map(({ account: m }) => [m.id, m.imBps])),
-      rates, offers, prices,
+      rates, offers, prices, insurance: { USDC: insUsdc, USDG: insUsdg },
     };
   }
 
   /** Fresh snapshot: awaits on first use, then serves the cache and refreshes in the background. */
   async function getSnap(force = false): Promise<Snap> {
+    // A forced refresh (after a write) must not reuse a load that started before the write.
+    if (force && loading) await loading.catch(() => undefined);
     const stale = !snap || Date.now() - snap.at > SNAP_TTL_MS;
     if ((force || stale) && !loading) {
       loading = load().then((s) => { snap = s; loading = null; if (!force) notify(); return s; }, (e) => { loading = null; throw e; });
@@ -618,7 +628,7 @@ export function createChainProvider(opts: ChainOptions): ParityData {
     async info(): Promise<ProviderInfo> {
       const s = await getSnap().catch(() => null);
       const w = bridge.current();
-      return { kind: "chain", cluster: CHAIN.cluster, admin: s?.cfg.admin.toBase58() ?? null, isAdmin: !!(s && w && w.publicKey.equals(s.cfg.admin)) };
+      return { kind: "chain", cluster: CHAIN.cluster, admin: s?.cfg.admin.toBase58() ?? null, isAdmin: !!(s && w && w.publicKey.equals(s.cfg.admin)), insurance: s ? { ...s.insurance } : undefined };
     },
 
     peek: {

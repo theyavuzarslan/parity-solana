@@ -54,6 +54,11 @@ export function DispatchSheet() {
         <div>
           <h1 className="t-display text-3xl text-navy md:text-[3rem]">Dispatch office</h1>
           <p className="mt-2 max-w-prose text-navy-2">Admin and demo controls for the devnet rehearsal. Every action is labelled with its effect and written to the dispatch log. {chain ? "Each action is a signed transaction on the program; the log shows its signature." : "All actions here are mock."}</p>
+          {info.value?.insurance ? (
+            <p className="mt-2 text-sm text-navy-2">
+              Insurance fund: <span className="t-num text-navy">{fmtNum(info.value.insurance.USDC, 2)}</span> test USDC · <span className="t-num text-navy">{fmtNum(info.value.insurance.USDG, 2)}</span> test USDG
+            </p>
+          ) : null}
           {err ? <p role="alert" className="mt-2 text-sm text-red">{err}</p> : null}
         </div>
 
