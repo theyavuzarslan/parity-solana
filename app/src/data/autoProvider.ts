@@ -25,9 +25,15 @@ export function createAutoProvider(): ParityData {
   chain.subscribe(() => current === chain && notify());
 
   if (typeof window !== "undefined") {
-    configExists(programId)
-      .then((ok) => { if (!ok) { current = mock; notify(); } })
-      .catch(() => { current = mock; notify(); });
+    // Only a definite "no Config account" swaps to the mock. An RPC error (the public devnet RPC
+    // answers bursts with 429) is retried and never drops a live deployment to preview data.
+    const id = programId;
+    const probe = (attempt: number): void => {
+      configExists(id)
+        .then((ok) => { if (!ok) { current = mock; notify(); } })
+        .catch(() => { if (attempt < 6) setTimeout(() => probe(attempt + 1), 500 * 2 ** attempt); });
+    };
+    probe(0);
   }
 
   const d = (): ParityData => current;

@@ -66,6 +66,7 @@ export function AdvisorDesk() {
   const side = sideOf(pair.direction);
   const quote = markets.value?.find((m) => m.id === pair.market);
   const lockedQ = useParityQuery((d) => d.lockedByMonth(pair.market, side), [pair.market, side]);
+  const openPos = useParityQuery((d) => d.getPositions(), [pair.market, side]);
   const complete = step > STEP_COUNT && !!inputs;
 
   const advice =
@@ -141,10 +142,11 @@ export function AdvisorDesk() {
     setSheet({ req: lockReq, lq: lqLock, quote, anchor });
   };
 
-  const lockedUsdTotal = Object.values(lockedQ.value ?? {}).reduce((a, b) => a + b, 0);
   const m = marketConfig(pair.market);
-  // USD → quote currency at upq (USD per quote unit): 1 / USD/TRY for every lira market, crosses included.
-  const lockedQuoteTotal = quote ? lockedUsdTotal / quote.upq : 0;
+  // What is already locked, at each coupon's own locked rate (quantity × strike), as the Wallet shows it.
+  const lockedQuoteTotal = (openPos.value ?? [])
+    .filter((p) => p.market === pair.market && p.side === side && p.status !== "Settled" && p.status !== "Liquidated")
+    .reduce((a, p) => a + p.quantity * p.strike, 0);
 
   const summary = complete && inputs ? (
     <Summary
