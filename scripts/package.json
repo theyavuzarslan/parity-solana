@@ -13,6 +13,7 @@
     "relay": "tsx src/relay.ts",
     "keeper": "tsx src/keeper.ts",
     "taker": "tsx src/taker-demo.ts",
+    "ladder-e2e": "tsx src/ladder-e2e.ts",
     "typecheck": "tsc --noEmit",
     "demo-admin": "tsx src/demo-admin.ts"
   },

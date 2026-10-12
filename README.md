@@ -195,7 +195,9 @@ For the demo, the Dispatch page (admin wallet only) shocks prices and moves the 
 | Scripts (keeper, relay, payout) | `pnpm --filter scripts test` | 18 tests |
 | Advisor | `pnpm test:advisor` | 12 tests |
 
-The program's LiteSVM tests load `target/deploy/parity.so`, so run `anchor build` first or they test a stale binary. Counts come from our last full run. The program and app suites have been run against a local validator end to end: faucet, a three-rung ladder in one transaction, shock, margin call, partial liquidation, full liquidation and settlement in both USDC and USDG. A devnet run is pending until the deployer is funded.
+The program's LiteSVM tests load `target/deploy/parity.so`, so run `anchor build` first or they test a stale binary. Counts come from our last full run.
+
+Transaction size: a 6-rung ladder (six `take_offer` on one offer plus a compute-budget instruction) is 1,036 of 1,232 bytes and used 306k compute units on a local validator; Dispatch "Reset demo state" (clock plus 15 cleared demo prices) is 746 bytes. Reproduce with `CLUSTER=localnet RESET=1 pnpm --filter scripts ladder-e2e`. The program and app suites have been run against a local validator end to end: faucet, a three-rung ladder in one transaction, shock, margin call, partial liquidation, full liquidation and settlement in both USDC and USDG. A devnet run is pending until the deployer is funded.
 
 ## Design
 
