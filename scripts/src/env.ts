@@ -19,8 +19,15 @@ export const KEYS = join(ROOT, "keys");
 export type Cluster = "localnet" | "devnet";
 export const CLUSTER: Cluster = (process.env.CLUSTER as Cluster) ?? "devnet";
 if (CLUSTER !== "localnet" && CLUSTER !== "devnet") throw new Error(`CLUSTER must be localnet|devnet, got ${CLUSTER}`);
+// Optional private devnet RPC (e.g. Helius): one line `RPC_URL=...` in the gitignored repo-root .env.rpc.
+function rpcFromFile(): string | undefined {
+  const f = join(ROOT, ".env.rpc");
+  if (!existsSync(f)) return undefined;
+  const m = readFileSync(f, "utf8").match(/^\s*RPC_URL\s*=\s*(\S+)/m);
+  return m?.[1];
+}
 export const RPC_URL =
-  process.env.RPC_URL ?? (CLUSTER === "localnet" ? "http://127.0.0.1:8899" : "https://api.devnet.solana.com");
+  process.env.RPC_URL ?? (CLUSTER === "devnet" ? rpcFromFile() : undefined) ?? (CLUSTER === "localnet" ? "http://127.0.0.1:8899" : "https://api.devnet.solana.com");
 
 export const connection = new Connection(RPC_URL, "confirmed");
 

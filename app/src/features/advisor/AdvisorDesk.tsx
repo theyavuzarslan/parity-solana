@@ -715,7 +715,7 @@ function Mechanism({ advice, quote, rates }: { advice: Advice; quote: MarketQuot
     { k: "Expected spot", v: fmtPrice(advice.expected, dp), note: `Spot × recent drift ${fmtPct(advice.driftPct, 1, true)} a year` },
   ];
   return (
-    <Panel title="Why this ratio" aside={<span>Rates: demo, to be verified</span>}>
+    <Panel title="Why this ratio" aside={<span>Policy rates · 12 Oct 2026</span>}>
       <p className="t-num rounded-[4px] border border-hairline bg-coupon px-3 py-2 text-sm text-navy">
         F = S × (1 + r<sub>{m.quote}</sub>·t) / (1 + r<sub>{m.baseRate}</sub>·t) ={" "}
         <span className="text-carbon">{fmtPrice(advice.spot, dp)} × (1 + {fmtNum(rq.ratePct, 2)}%·{advice.horizonDays}/{rq.basis}) / (1 + {fmtNum(rb.ratePct, 2)}%·{advice.horizonDays}/{rb.basis})</span>

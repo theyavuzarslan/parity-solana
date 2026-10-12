@@ -31,7 +31,7 @@ export function MarketsBoard() {
         <div>
           <h1 className="t-display text-3xl text-navy md:text-[3rem]">Live status board</h1>
           <p className="mt-2 max-w-prose text-navy-2">
-            Fifteen markets. Forwards are computed from spot and the rate gap: F = S × (1 + r<sub>quote</sub>·t) / (1 + r<sub>base</sub>·t). Rates are demo values, to be verified.
+            Fifteen markets. Forwards are computed from spot and the rate gap: F = S × (1 + r<sub>quote</sub>·t) / (1 + r<sub>base</sub>·t). Rates are central-bank policy rates as of 12 Oct 2026, admin-set on chain; gold and silver lease rates are assumptions.
           </p>
         </div>
         <div className="text-right">
@@ -53,7 +53,7 @@ export function MarketsBoard() {
         </div>
       )}
       <p className="mt-8 text-xs text-navy-2">
-        REF: priced off the ECB reference rate (daily) — a daily reference, not a live feed; USD/CNH uses CNY as a proxy. CLOSED: the last Pyth price is older than 120 seconds (FX closes at weekends; it reopens Sunday 22:00 UTC). STALE: no feed for this market — gold and silver show round demo prices unless a Pyth key is set. Rates are demo values, to be verified. Best offer = tightest demo maker spread.
+        REF: priced off the ECB reference rate (daily) — a daily reference, not a live feed; USD/CNH uses CNY as a proxy. CLOSED: the last Pyth price is older than 120 seconds (FX closes at weekends; it reopens Sunday 22:00 UTC). STALE: no feed for this market — gold and silver show round demo prices unless a Pyth key is set. Rates: central-bank policy rates as of 12 Oct 2026; metals lease rates assumed. Best offer = tightest demo maker spread.
       </p>
     </div>
   );

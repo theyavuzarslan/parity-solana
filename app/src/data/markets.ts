@@ -94,14 +94,14 @@ export const marketConfig = (id: MarketId): MarketConfig => {
   return m;
 };
 
-export const RATE_SOURCE = "demo, to be verified";
+export const RATE_SOURCE = "central-bank policy rate, 12 Oct 2026";
 
 /** Seed rate registry (13 codes) from shared/src/markets.ts (the values deploy seeds on chain). */
 export const SEED_RATES: Omit<Rate, "updatedAt">[] = SHARED_RATES.map((r) => ({
   code: r.code as RateCode,
   ratePct: r.rateBps / 100,
   basis: r.basisDays,
-  source: r.code === "XAU" || r.code === "XAG" ? "demo lease-rate proxy, to be verified" : RATE_SOURCE,
+  source: r.code === "XAU" || r.code === "XAG" ? "assumed lease rate (no public source)" : RATE_SOURCE,
 }));
 
 /** Protocol constants mirrored from the spec (§5). */

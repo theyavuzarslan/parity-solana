@@ -148,7 +148,7 @@ export function DispatchSheet() {
           </div>
         </Panel>
 
-        <Panel title="Rate registry" aside={<span>13 codes · demo, to be verified</span>}>
+        <Panel title="Rate registry" aside={<span>13 codes · policy rates, 12 Oct 2026</span>}>
           {rates.value ? <RateTable rates={rates.value} onSet={(c, v) => run(`rate-${c}`, () => data.demo.setRate(c, v))} busy={busy} /> : null}
         </Panel>
       </div>

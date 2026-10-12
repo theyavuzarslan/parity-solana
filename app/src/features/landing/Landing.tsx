@@ -69,7 +69,7 @@ export function Landing() {
                 </ol>
                 <p className="t-num mt-3 text-sm text-navy">F = S × (1 + r<sub>TRY</sub>·t) / (1 + r<sub>USD</sub>·t)</p>
                 <p className="mt-2 text-sm text-navy-2">
-                  Lira deposits earn <span className="t-num text-carbon">{fmtNum(rTry.ratePct, 2)}%</span> and dollar deposits <span className="t-num text-carbon">{fmtNum(rUsd.ratePct, 2)}%</span> a year (demo rates, to be verified), so a future dollar costs more lira than one today. The gap is the price of locking, not a dealer&rsquo;s guess.
+                  Lira deposits earn <span className="t-num text-carbon">{fmtNum(rTry.ratePct, 2)}%</span> and dollar deposits <span className="t-num text-carbon">{fmtNum(rUsd.ratePct, 2)}%</span> a year (central-bank policy rates, 12 Oct 2026), so a future dollar costs more lira than one today. The gap is the price of locking, not a dealer&rsquo;s guess.
                 </p>
               </div>
             ) : (
