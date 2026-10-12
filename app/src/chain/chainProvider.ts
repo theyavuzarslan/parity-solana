@@ -402,7 +402,7 @@ export function createChainProvider(opts: ChainOptions): ParityData {
     const raw = `${msg}\n${logs}`;
     if (name) return Object.assign(new Error(`The program refused: ${name}.`), { code: name, raw, cause: e });
     if (/User rejected|rejected the request/i.test(msg)) return Object.assign(new Error("You cancelled the signature."), { raw, cause: e });
-    if (/^Unexpected error$|429|rate limit/i.test(msg)) return Object.assign(new Error("The wallet could not send: the devnet RPC is busy. Check Wallet, then try again in a few seconds."), { raw, cause: e });
+    if (/^Unexpected error$|429|rate limit/i.test(msg)) return Object.assign(new Error("The wallet could not send this transaction. Check Wallet, then try again."), { raw, cause: e });
     return Object.assign(new Error(msg), { raw, cause: e });
   }
 

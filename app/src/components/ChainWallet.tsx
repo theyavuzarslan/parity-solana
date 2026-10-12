@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { WalletReadyState, type Adapter, type WalletName } from "@solana/wallet-adapter-base";
+import type { Transaction } from "@solana/web3.js";
 import { WalletProvider, useWallet } from "@solana/wallet-adapter-react";
 import { walletBridge } from "@/chain/bridge";
 import { isLocalnet } from "@/chain/config";
@@ -25,17 +26,28 @@ export function ChainWallet({ children }: { children: ReactNode }) {
 }
 
 function BridgeSync() {
-  const { publicKey, wallet, connected, sendTransaction, disconnect } = useWallet();
+  const { publicKey, wallet, connected, sendTransaction, signTransaction, disconnect } = useWallet();
   useEffect(() => {
     walletBridge.setDisconnect(async () => { await disconnect(); });
   }, [disconnect]);
   useEffect(() => {
     if (connected && publicKey && wallet) {
-      walletBridge.set({ publicKey, label: wallet.adapter.name, sendTransaction: (tx, c, o) => sendTransaction(tx, c, o) });
+      // Prefer "wallet signs, app broadcasts": Phantom's own sign-and-send fails on devnet with a bare
+      // "Unexpected error" for transactions that simulate cleanly. The wallet signs first (it may add
+      // its own instructions), then any extra signers sign the final message.
+      const send: typeof sendTransaction = signTransaction
+        ? async (tx, c, o) => {
+            const signed = await signTransaction(tx as Parameters<typeof signTransaction>[0]);
+            const extra = (o as { signers?: Parameters<Transaction["partialSign"]> } | undefined)?.signers ?? [];
+            if (extra.length && "partialSign" in signed) signed.partialSign(...extra);
+            return c.sendRawTransaction(signed.serialize(), { preflightCommitment: "confirmed", maxRetries: 5 });
+          }
+        : sendTransaction;
+      walletBridge.set({ publicKey, label: wallet.adapter.name, sendTransaction: send });
     } else {
       walletBridge.set(null);
     }
-  }, [connected, publicKey, wallet, sendTransaction]);
+  }, [connected, publicKey, wallet, sendTransaction, signTransaction]);
   return null;
 }
 
