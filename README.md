@@ -33,13 +33,13 @@ Parity is a two-sided, margined, cash-settled forward market. One side goes long
 F = S × (1 + r_quote · t / B_quote) / (1 + r_base · t / B_base)
 ```
 
-`S` is spot from the price source, `r` is an annual rate from an on-chain rate registry, `t` is time to maturity, and `B` is the day-count basis. In the program this is one integer expression in 1e8 fixed point, with rounding in favour of the protocol.
+`S` is spot from the price source, `r` is an annual rate from an on-chain rate registry, `t` is time to maturity, and `B` is the day-count basis. In the program this is one integer expression in 1e8 fixed point.
 
 Day count: 360 for USD, EUR, CHF, JPY, CNH, MXN, XAU and XAG; 365 for TRY, GBP, ZAR, INR and BRL (Brazil's 252-business-day convention is simplified to 365). For metals, the lease rate stands in for the base-currency rate. Seed rates are in [docs/rates.md](docs/rates.md); the gold and silver lease rates are marked there as unverified assumptions, and the app labels them.
 
 With TRY at 37% and USD at 3.875%, the 90-day USD/TRY forward sits about 8% above spot. That gap is the carry the Advisor shows.
 
-**Standing maker offers.** Makers post offers with a side, a spread, a tenor range (1 to 365 days) and capacity. A taker picks an offer and a notional (minimum $10). The strike is the forward plus or minus the maker's spread. Offers are seeded by script in this build; there is no maker console.
+**Standing maker offers.** Makers post offers with a side, a spread, a tenor range and capacity. The program allows tenors of 1–365 days; the seeded offers quote 7–180 days. A taker picks an offer and a notional (minimum $10). The strike is the forward plus or minus the maker's spread. Offers are seeded by script in this build; there is no maker console.
 
 **Margin.** Initial margin is at least 10% of notional on every market. In the seeded config, TRY pairs and GAU/TRY use 12% and all other markets use 10%. Both sides post margin in USDC (SPL Token) or USDG (Token-2022). The taker pays a 10 bps open fee.
 
@@ -58,11 +58,11 @@ With TRY at 37% and USD at 3.875%, the 90-day USD/TRY forward sits about 8% abov
 
 ## Hedge Advisor
 
-A client-side calculator. A guided check-in asks for persona, exposure, horizon (1 to 6 months) and risk preference, one question at a time.
+A client-side calculator. A guided check-in asks for persona, exposure, lira need, horizon (1, 3 or 6 months) and how a 10% move against you would feel, one question at a time.
 
 - **Cost-aware hedge ratio.** A mean-variance rule, signed by direction. A hedger who sells the base forward (a USD earner) gets `h* = 1 + (F − E[S_T]) / (γ·σ²·X)`. A hedger who buys the base forward (an importer, a saver) gets `h* = 1 − (F − E[S_T]) / (γ·σ²·X)`. The result is clamped to [0, 1]. Opposite users get opposite advice, and the app shows the inputs.
 - **Volatility.** EWMA (λ = 0.94) on daily returns, precomputed into `vol.json` at build time, with a floor of 10%.
-- **Ladder.** Month 1 up to 100%, month 2 up to 75%, month 3 up to 50%, and so on, each scaled by `h*`.
+- **Ladder.** Month 1 up to 100%, month 2 up to 75%, month 3 up to 50%, and so on, each scaled by `h*`. A rung under the $10 minimum position size is left out, and the Advisor says so.
 - **Lock it.** One transaction with one `take_offer` per rung, so the whole ladder opens or none of it does.
 
 Direct hedges only in this build. Cross-hedge ratios are on the roadmap.
@@ -119,16 +119,23 @@ Pyth Hermes now needs an API key, and devnet has no fresh FX feeds. So on devnet
 
 In demo mode the admin can shock a price and move the clock to walk through a margin call and liquidation on video.
 
+- A Dispatch shock on a single-feed market scales that feed everywhere it is used: shocking USD/TRY also moves EUR/TRY, GBP/TRY and GAU/TRY.
+- In ECB mode the relay only rewrites a market when the daily reference changes, so a Dispatch shock stays until then. **In Hermes mode the relay rewrites prices about every tick, so it overwrites Dispatch shocks each tick**; use the relay's shock file for a lasting shock.
+- "Reset demo state" sets the clock back to +0 and clears every demo price; the relay writes the reference prices again at its next tick (about 10 s).
+- Devnet has no live Pyth FX feeds, so turning demo mode off pauses trading (the app refuses to lock without an on-chain price). The relay turns demo mode back on at its next tick.
+- The Markets page shows "Prices last relayed" from the newest transaction on the DemoState account.
+
 The production design reads Pyth `PriceUpdateV2` accounts on chain. That path is already implemented in `oracle.rs`: it checks that the account owner is the Pyth receiver, that the feed ID matches the market, that verification level is Full, that the price is no older than `max_price_age_secs`, and that confidence is within `max_conf_bps`. Weekend FX closure therefore halts marks, so nothing is liquidated on a stale price. User transactions never post price updates, which keeps a ladder inside the transaction size limit.
 
 ## Security notes
 
 - **Oracle checks.** Feed ID, owner and verification level (`WrongFeed`), staleness (`MarketClosedOrStale`), confidence (`OracleConfidence`). `mark` requires a strictly newer publish time than the last one.
-- **Payouts cannot be redirected or blocked.** Every transfer out of the vault goes to the associated token account of the position's long, short or the offer's maker. A permissionless caller cannot choose a destination. A fix covers the case where a party reassigns the owner of their token account to block a payout: payouts go to any account owned by the party, and accounts with a memo requirement or CPI guard are rejected.
+- **Payouts cannot be redirected or blocked.** Every transfer out of the vault goes to a token account of the position's mint that is owned by the party being paid (the long, the short or the offer's maker). Any such account is accepted, so a party cannot block a payout by reassigning their associated token account, and a permissionless caller cannot send funds to anyone else. Accounts with a memo-transfer requirement or CPI guard are rejected.
 - **Token-2022 extension guard.** USDG is accepted only with MetadataPointer and TokenMetadata extensions. TransferFee, TransferHook and DefaultAccountState are rejected, and payout accounts are checked for extensions too.
 - **Gated initialize.** `initialize` must be signed by the program's upgrade authority, so no one can front-run setup.
 - **Position nonces** come from the offer's counter, never from caller input.
-- **Rounding** goes against the user and toward the protocol. Dust goes to insurance.
+- **Rounding.** PnL is a zero-sum transfer: short = −long, with long PnL floored toward −∞. Fees round up.
+- **Known limitations (deferred).** Rounding dust can strand the last micro-units of an offer's capacity; exhausted offers stay listed until the maker cancels them; admin margin-parameter changes apply to open offers.
 - **Maturity.** `liquidate` is rejected after maturity; `settle` handles that case.
 
 This code is unaudited.
@@ -141,7 +148,7 @@ This code is unaudited.
 
 ## Competition
 
-- **Borsa Istanbul VİOP.** USD/TRY futures and options trade in USD 1,000 contracts with fixed expiries, through a licensed Turkish intermediary. Parity offers positions from $10, any tenor from 1 to 365 days, and stablecoin margin and settlement. We have not compared fees, and we have not confirmed whether non-residents can open VİOP accounts, so we make no claim on either.
+- **Borsa Istanbul VİOP.** USD/TRY futures and options trade in USD 1,000 contracts with fixed expiries, through a licensed Turkish intermediary. Parity offers positions from $10, tenors the program allows from 1 to 365 days (the seeded demo offers quote 7 to 180), and stablecoin margin and settlement. We have not compared fees, and we have not confirmed whether non-residents can open VİOP accounts, so we make no claim on either.
 - **On-chain FX perpetuals** (Ostium on Arbitrum; GMTrade and Flash Trade on Solana). Perpetuals have no maturity and are kept near spot by a funding rate that changes over time, so the cost of a 90-day hedge is unknown on day one. A dated forward fixes the rate and the cost at the start, and its price comes from the published rate gap. We did not find a USD/TRY or TRY-cross listing on any of these venues.
 
 ## Devnet addresses
@@ -166,12 +173,16 @@ CLUSTER=localnet scripts/deploy.sh
 CLUSTER=localnet pnpm --filter scripts relay
 CLUSTER=localnet pnpm --filter scripts keeper
 
-# 4. app: set NEXT_PUBLIC_USDC_MINT and NEXT_PUBLIC_USDG_MINT (from keys/mints.localnet.json)
-#    and, for the faucet, FAUCET_SECRET_KEY (keys/faucet.json) in app/.env.local
+# 4. app: copy app/.env.example to app/.env.local and fill it in: NEXT_PUBLIC_USDC_MINT and
+#    NEXT_PUBLIC_USDG_MINT (from keys/mints.localnet.json), FAUCET_SECRET_KEY (keys/faucet.json)
 pnpm --filter app dev
 ```
 
-For devnet, use `CLUSTER=devnet` and fund the deployer with about 6 SOL first. Add `PYTH_API_KEY` to the relay's environment to use Pyth Hermes prices.
+Every app variable is listed, names only, in [app/.env.example](app/.env.example). `NEXT_PUBLIC_*` values are inlined into the client bundle; `FAUCET_SECRET_KEY` and `PYTH_API_KEY` are server-only. Never set `PARITY_DEV_WALLET` on Vercel.
+
+For devnet, use `CLUSTER=devnet` and fund the deployer with about 9 SOL first (program rent plus 3 SOL that `01-mints.ts` seeds into the faucet key; `FAUCET_SOL` overrides). The faucet key pays ATA rent on every faucet request (10,000 test USDC + 10,000 test USDG), so top it up when the faucet starts failing. Add `PYTH_API_KEY` to the relay's environment to use Pyth Hermes prices (and set `NEXT_PUBLIC_RELAY_SOURCE=hermes` so the app labels them).
+
+Use a dedicated devnet RPC for the deployed app: `NEXT_PUBLIC_RPC_URL` ships to every browser, so it must be key-less or domain-restricted. The public endpoint rate-limits quickly. The app polls program accounts every 15 s and prices every 10 s, and pauses while the tab is hidden.
 
 For the demo, the Dispatch page (admin wallet only) shocks prices and moves the clock. The relay also accepts a shock file: `echo "+12%" > keys/shock-usdtry`.
 
@@ -179,12 +190,12 @@ For the demo, the Dispatch page (admin wallet only) shocks prices and moves the 
 
 | Suite | Command | Result |
 |---|---|---|
-| Program (math, state, LiteSVM lifecycle) | `cargo test -p parity` | 100 tests |
-| App | `pnpm --filter app test` | 49 tests |
-| Scripts (keeper, relay, payout) | `pnpm --filter scripts test` | 15 tests |
+| Program (math, state, LiteSVM lifecycle) | `anchor build` then `cargo test -p parity` | 100 tests |
+| App | `pnpm --filter app test` | 77 tests |
+| Scripts (keeper, relay, payout) | `pnpm --filter scripts test` | 18 tests |
 | Advisor | `pnpm test:advisor` | 12 tests |
 
-Counts come from our build reports at the time of writing. The program and app suites have been run against a local validator end to end: faucet, a three-rung ladder in one transaction, shock, margin call, partial liquidation, full liquidation and settlement in both USDC and USDG. A devnet run is pending until the deployer is funded.
+The program's LiteSVM tests load `target/deploy/parity.so`, so run `anchor build` first or they test a stale binary. Counts come from our last full run. The program and app suites have been run against a local validator end to end: faucet, a three-rung ladder in one transaction, shock, margin call, partial liquidation, full liquidation and settlement in both USDC and USDG. A devnet run is pending until the deployer is funded.
 
 ## Design
 

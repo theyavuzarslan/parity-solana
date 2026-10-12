@@ -69,7 +69,11 @@ ${out.markets.map((m) => `| ${m.id} | ${m.symbol} | \`${m.address}\` |`).join("\
 ## Offers
 
 ${offers.length} maker offers (USDC on all 15 markets, both sides; USDG on the 5 demo markets).
-Capacity $250k each, tenors 7–180 days, spread 15 bps majors / 40 bps TRY, EM and metals.
+Capacity $250k each, spread 15 bps majors / 40 bps TRY, EM and metals. Tenors: the program allows
+1–365 days; the seeded offers quote 7–180 days.
+
+The faucet mint authority pays ATA rent on every app faucet request (10,000 test USDC + 10,000 test
+USDG). It is seeded with 3 SOL (\`FAUCET_SOL\`); top it up when the faucet starts failing.
 `;
   writeFileSync(join(ROOT, "docs/devnet.md"), md);
   console.log("wrote docs/devnet.md");
