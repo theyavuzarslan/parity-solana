@@ -4,3 +4,11 @@ keys/
 **/.env*
 target/
 test-ledger/
+# Local tooling and working notes: never needed by the app build
+.superpowers/
+.claude/
+.impeccable/
+.anchor/
+.surfpool/
+design-drafts/
+**/node_modules/

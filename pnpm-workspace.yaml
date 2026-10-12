@@ -1,1 +1,9 @@
-packages: ["app", "scripts", "advisor"]
+packages:
+  - app
+  - advisor
+  - shared
+  - scripts
+
+ignoredBuiltDependencies:
+  - sharp
+  - unrs-resolver
