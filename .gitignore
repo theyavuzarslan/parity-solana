@@ -7,5 +7,6 @@ node_modules/
 test-ledger/
 .surfpool/
 .env*
+!.env.example
 keys/
 .vercel
