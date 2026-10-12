@@ -28,6 +28,14 @@ grep -q "\"address\": \"$PROGRAM_ID\"" target/idl/parity.json || { echo "IDL add
 if solana program show "$PROGRAM_ID" -u "$URL" >/dev/null 2>&1 && [ -z "${UPGRADE:-}" ]; then
   echo "  skip  program already deployed (UPGRADE=1 to redeploy)"
 else
+  if solana program show "$PROGRAM_ID" -u "$URL" >/dev/null 2>&1; then
+    # Upgrade: grow programdata first if the new .so is larger (default max-len = original size).
+    CUR=$(solana program show "$PROGRAM_ID" -u "$URL" | awk '/Data Length/ {print $3}')
+    NEW=$(wc -c < target/deploy/parity.so | tr -d ' ')
+    if [ "$NEW" -gt "$CUR" ]; then
+      solana program extend "$PROGRAM_ID" $((NEW - CUR)) -u "$URL" --keypair "$WALLET"
+    fi
+  fi
   solana program deploy target/deploy/parity.so --program-id "$PROGRAM_KP" \
     -u "$URL" --keypair "$WALLET" --upgrade-authority "$WALLET"
 fi
