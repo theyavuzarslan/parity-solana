@@ -238,7 +238,8 @@ export interface ParityData {
   getMarkets(): Promise<MarketQuote[]>;
   getRates(): Promise<Rate[]>;
   getOffers(market?: MarketId): Promise<Offer[]>;
-  getPositions(): Promise<Position[]>;
+  /** `fresh`: bypass caches (and the hidden-tab guard) — used around signing to see what landed. */
+  getPositions(opts?: { fresh?: boolean }): Promise<Position[]>;
   getWallet(): Promise<WalletState>;
   getDemo(): Promise<DemoState>;
   getDispatchLog(): Promise<DispatchEntry[]>;
@@ -254,7 +255,11 @@ export interface ParityData {
   // Trading
   quoteLadder(req: LadderRequest): Promise<LadderQuote>;
   preflight(quote: LadderQuote): Promise<Preflight>;
-  lockLadder(req: LadderRequest): Promise<LockResult>;
+  /**
+   * `expected` (optional): the quote the user was shown. The provider re-plans right before building
+   * and signing and throws QuoteChangedError (data/quoteDrift) with the fresh quote on any drift.
+   */
+  lockLadder(req: LadderRequest, expected?: LadderQuote): Promise<LockResult>;
   addMargin(positionId: string, amountUsd: number): Promise<Position>;
   /**
    * Added in pass 2. USD notional already locked on this market and side, bucketed

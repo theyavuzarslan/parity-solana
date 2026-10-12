@@ -30,6 +30,7 @@ import { ScenarioChart } from "@/components/ScenarioChart";
 import { StatusChip } from "@/components/StatusChip";
 import { FAUCET_AMOUNT } from "@/data/mockProvider";
 import { CheckIn, PairSwitch } from "./CheckIn";
+import { TicketSheet } from "./TicketSheet";
 
 type LockState =
   | { kind: "idle" }
@@ -40,7 +41,6 @@ type LockState =
 
 export function AdvisorDesk() {
   const params = useSearchParams();
-  const { data } = useParity();
   const now = useNow();
   const fromUrl = params.get("persona");
   const [answers, setAnswers] = useState<Answers>({ ...EMPTY_ANSWERS, profile: fromUrl ? personaById(fromUrl).id : null });
@@ -53,6 +53,7 @@ export function AdvisorDesk() {
   const [excluded, setExcluded] = useState<number[]>([]);
   const [lock, setLock] = useState<LockState>({ kind: "idle" });
   const [nudge, setNudge] = useState<number | null>(null);
+  const [sheet, setSheet] = useState<{ req: LadderRequest; lq: LadderQuote; quote: MarketQuote; anchor: DOMRect | null } | null>(null);
 
   const markets = useParityQuery((d) => d.getMarkets(), [], 30_000, (d) => d.peek?.markets());
   const rates = useParityQuery((d) => d.getRates(), [], undefined, (d) => d.peek?.rates());
@@ -132,15 +133,12 @@ export function AdvisorDesk() {
     answer({});
   };
 
-  const onLock = async () => {
-    if (!lockReq || !lqLock) return;
-    setLock({ kind: "signing" });
-    try {
-      const res = await data.lockLadder(lockReq);
-      setLock({ kind: "done", positions: res.positions, lq: lqLock, signature: res.signature });
-    } catch (e) {
-      setLock({ kind: "error", message: e instanceof Error ? e.message : "The transaction failed." });
-    }
+  // LOCK IT opens the order ticket; signing happens on the ticket ("Sign & lock").
+  const onLock = () => {
+    if (!lockReq || !lqLock || !quote) return;
+    const anchor = typeof document !== "undefined" ? document.getElementById("lock-it")?.getBoundingClientRect() ?? null : null;
+    setLock({ kind: "idle" });
+    setSheet({ req: lockReq, lq: lqLock, quote, anchor });
   };
 
   const lockedUsdTotal = Object.values(lockedQ.value ?? {}).reduce((a, b) => a + b, 0);
@@ -251,6 +249,20 @@ export function AdvisorDesk() {
           firstNo={lock.kind === "done" ? lock.positions[0]?.no : undefined}
         />
       </aside>
+
+      <AnimatePresence>
+        {sheet ? (
+          <TicketSheet
+            key="ticket-sheet"
+            req={sheet.req}
+            lq={sheet.lq}
+            quote={sheet.quote}
+            anchor={sheet.anchor}
+            onClose={() => setSheet(null)}
+            onIssued={(res, issuedLq) => setLock({ kind: "done", positions: res.positions, lq: issuedLq, signature: res.signature })}
+          />
+        ) : null}
+      </AnimatePresence>
 
       {/* BELOW — the mechanism */}
       {advice && quote && rates.value ? (
