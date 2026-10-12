@@ -3,12 +3,11 @@
 // liquidate once breach_count >= config.params.liq_confirm_marks.
 // Signs with keys/keeper.json (a dedicated wallet, so its reward account never collides with a
 // party's payout account). Quietly skips the expected "not now" errors; logs every tx signature.
-import { Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, TransactionInstruction } from "@solana/web3.js";
-import {
-  ExtensionType, TOKEN_2022_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction,
-  createInitializeAccount3Instruction, getAccountLen, getAssociatedTokenAddressSync, getCpiGuard,
-  getMemoTransfer, unpackAccount, getExtensionTypes, getMint,
-} from "@solana/spl-token";
+import * as web3 from "@solana/web3.js";
+import { Keypair, LAMPORTS_PER_SOL, PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
+import * as spl from "@solana/spl-token";
+import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { resolvePayout as sharedResolvePayout } from "../../shared/src/payout.js";
 import { pathToFileURL } from "node:url";
 import {
   CLUSTER, configPda, connection, demoPda, ensureSol, errorName, insurancePda, keypair, marketPda,
@@ -34,47 +33,11 @@ const QUIET = new Set(["MarketClosedOrStale", "StalePublishTime", "NotLiquidatab
 export type Payout = { address: PublicKey; ixs: TransactionInstruction[]; signers: Keypair[]; note: string };
 
 /**
- * Payout account for `owner` in `mint` (liquidate/settle accept any token account of the mint owned
- * by the party; Token-2022 accounts with RequiredMemoTransfers or CpiGuard are rejected on-chain).
- * - canonical ATA missing            -> create it idempotently (keeper pays) and use it;
- * - ATA exists, owned by the party, no memo-required / CPI-guard -> use it;
- * - otherwise (owner reassigned, memo, CPI guard) -> create a fresh plain token account owned by the
- *   party in the same tx (new keypair, system create + InitializeAccount3, keeper pays).
+ * Payout account for `owner` in `mint`: the single implementation lives in shared/src/payout.ts
+ * (the app's Dispatch crank calls the same function). See there for the three cases.
  */
 export async function resolvePayout(payer: PublicKey, owner: PublicKey, mint: PublicKey, tp: PublicKey): Promise<Payout> {
-  const ata = getAssociatedTokenAddressSync(mint, owner, true, tp);
-  const info = await connection.getAccountInfo(ata, "confirmed");
-  if (!info) {
-    return { address: ata, ixs: [createAssociatedTokenAccountIdempotentInstruction(payer, ata, owner, mint, tp)], signers: [], note: "create-ata" };
-  }
-  let usable = false;
-  try {
-    const acct = unpackAccount(ata, info, tp);
-    const memo = tp.equals(TOKEN_2022_PROGRAM_ID) ? getMemoTransfer(acct) : null;
-    const guard = tp.equals(TOKEN_2022_PROGRAM_ID) ? getCpiGuard(acct) : null;
-    usable = acct.owner.equals(owner) && acct.mint.equals(mint) &&
-      !(memo?.requireIncomingTransferMemos) && !(guard?.lockCpi);
-  } catch { usable = false; }
-  if (usable) return { address: ata, ixs: [], signers: [], note: "ata" };
-
-  const fresh = Keypair.generate();
-  let space = 165;
-  if (tp.equals(TOKEN_2022_PROGRAM_ID)) {
-    const mintInfo = await getMint(connection, mint, "confirmed", tp);
-    const accountExts = getExtensionTypes(mintInfo.tlvData).flatMap((e) =>
-      e === ExtensionType.TransferFeeConfig ? [ExtensionType.TransferFeeAmount] : []);
-    space = getAccountLen(accountExts);
-  }
-  const lamports = await connection.getMinimumBalanceForRentExemption(space);
-  return {
-    address: fresh.publicKey,
-    ixs: [
-      SystemProgram.createAccount({ fromPubkey: payer, newAccountPubkey: fresh.publicKey, space, lamports, programId: tp }),
-      createInitializeAccount3Instruction(fresh.publicKey, mint, owner, tp),
-    ],
-    signers: [fresh],
-    note: "fresh-account",
-  };
+  return sharedResolvePayout({ web3, spl }, connection, payer, owner, mint, tp);
 }
 
 function priceAccounts(marketId: number) {
