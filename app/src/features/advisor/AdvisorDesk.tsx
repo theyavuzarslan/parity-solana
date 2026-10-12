@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useState, type ReactNode } from "react";
 import { useParity, useParityQuery } from "@/data/provider";
-import { marketConfig } from "@/data/markets";
+import { marketConfig, PROTOCOL } from "@/data/markets";
 import type { LadderQuote, LadderRequest, MarketQuote, Mint, Position, Preflight, Rate, WalletState } from "@/data/types";
 import { advise, scenarioSeries, type Advice } from "@/lib/advise";
 import {
@@ -17,6 +17,7 @@ import { cx, fmtNum, fmtPct, fmtPrice, fmtStamp, fmtUsd } from "@/lib/format";
 import { ISSUE_STAGGER, spring } from "@/lib/motion";
 import { personaById, sideOf } from "@/lib/personas";
 import { useTheme } from "@/lib/theme";
+import { sourceLabel } from "@/lib/sourceLabel";
 import { useNow } from "@/lib/useNow";
 import { Button } from "@/components/Button";
 import { CarbonCopy, CopyLine } from "@/components/CarbonCopy";
@@ -74,7 +75,10 @@ export function AdvisorDesk() {
     ? advise({ quote, rates: rates.value, direction: pair.direction, monthlyUsd: inputs.monthlyUsd, months: inputs.months, risk: inputs.risk }).h
     : advice?.h ?? 1;
   const planned: PlannedRung[] = advice && inputs ? netLocked(advice.rungs, lockedQ.value ?? {}, inputs.monthlyUsd) : [];
-  const toQuote = planned.filter((r) => r.amount > 0 && !excluded.includes(r.month));
+  // The program refuses positions under the $10 minimum notional: such rungs are left out (and said so).
+  const minUsd = PROTOCOL.minNotionalUsd;
+  const underMin = planned.filter((r) => r.amount > 0 && r.amount < minUsd && !excluded.includes(r.month));
+  const toQuote = planned.filter((r) => r.amount >= minUsd && !excluded.includes(r.month));
 
   const req: LadderRequest | null = toQuote.length
     ? { market: pair.market, side, mint, rungs: toQuote.map((r) => ({ month: r.month, tenorDays: r.tenorDays, amount: r.amount })) }
@@ -90,7 +94,7 @@ export function AdvisorDesk() {
   const pfQ = useParityQuery((d) => (lqLock ? d.preflight(lqLock) : Promise.resolve(null)), [JSON.stringify(lqLock)]);
   const pf = lqLock ? (pfQ.value ?? null) : null;
   const noSeatMonths = lq?.rungs.filter((r) => !r.offerId).map((r) => r.month) ?? [];
-  const whyRungs = planned.filter((r) => !excluded.includes(r.month) && !noSeatMonths.includes(r.month));
+  const whyRungs = planned.filter((r) => !excluded.includes(r.month) && !noSeatMonths.includes(r.month) && !(r.amount > 0 && r.amount < minUsd));
 
   /* ---- check-in navigation ---- */
   const reset = () => { setLock({ kind: "idle" }); setExcluded([]); };
@@ -154,6 +158,8 @@ export function AdvisorDesk() {
       why={lock.kind === "done" ? `Locked ${lock.positions.length} coupon${lock.positions.length > 1 ? "s" : ""} in one signature. Edit any answer to plan the next ones; what you hold now is netted out.` : advice ? whySentence({ rungs: whyRungs, nowSec: now, direction: pair.direction, forwardAboveExpected: advice.forward >= advice.expected, market: pair.market, override: fullOverride }) : "Enter at least $10 a month to size a ladder."}
       onEdit={goto}
       onPair={(i) => { setAnswers({ ...answers, pairIdx: i }); setFullOverride(false); reset(); }}
+      underMin={underMin}
+      minUsd={minUsd}
       fullOverride={fullOverride}
       advisedH={advisedH}
       onOverride={(v) => { setFullOverride(v); reset(); }}
@@ -272,10 +278,11 @@ export function AdvisorDesk() {
 /* ---------------------------------------------------------------- */
 
 function Summary({
-  answers, inputs, advice, planned, sentence, why, onEdit, onPair, fullOverride, advisedH, onOverride,
+  answers, inputs, advice, planned, sentence, why, onEdit, onPair, fullOverride, advisedH, onOverride, underMin = [], minUsd = 10,
 }: {
   answers: Answers; inputs: NonNullable<ReturnType<typeof checkInToLadderInputs>>; advice: Advice | null; planned: PlannedRung[];
   sentence: string; why: string; onEdit: (s: number) => void; onPair: (i: number) => void; fullOverride: boolean; advisedH: number; onOverride: (v: boolean) => void;
+  underMin?: PlannedRung[]; minUsd?: number;
 }) {
   const chips: { step: number; label: string }[] = [
     { step: 1, label: PROFILE_OPTIONS.find((o) => o.value === answers.profile)!.label },
@@ -311,6 +318,11 @@ function Summary({
       {netted.length ? (
         <p className="text-xs text-navy-2">
           Netted out what you already hold: {netted.map((r) => `${fmtUsd(r.lockedUsd, 0)} in month ${r.month}`).join(", ")}.
+        </p>
+      ) : null}
+      {underMin.length ? (
+        <p className="text-xs text-navy-2" data-testid="under-min">
+          Left out {underMin.map((r) => `month ${r.month} (${fmtUsd(r.amount)})`).join(", ")}: below the {fmtUsd(minUsd, 0)} minimum position size.
         </p>
       ) : null}
       {advice && (advice.h < 0.995 || fullOverride) ? (
@@ -374,7 +386,7 @@ function ActionBar({
   } else if (preflight && !preflight.ok && preflight.reason === "need-sol") {
     button = (
       <Button id="lock-it" variant="primary" size="lg" block loading={busy === "sol"} loadingLabel="Requesting…" error={err} onClick={() => run("sol", () => data.requestSol())}>
-        Get test SOL
+        {info?.kind === "chain" && info.cluster === "devnet" ? "Open SOL faucet" : "Get test SOL"}
       </Button>
     );
     notice = (
@@ -404,11 +416,17 @@ function ActionBar({
             {quote.status === "CLOSED" ? " FX reopens Sunday 22:00 UTC." : ""}
           </span>
         ) : null}
+        {preflight.detail ? <span className="mt-0.5 block" data-testid="preflight-detail">{preflight.detail}</span> : null}
       </Notice>
     );
   } else if (preflight && !preflight.ok && preflight.reason === "no-offer") {
     button = <Button id="lock-it" variant="primary" size="lg" block disabled>Lock it</Button>;
-    notice = <Notice title="No maker offer covers this ladder">Try a shorter horizon.</Notice>;
+    notice = (
+      <Notice title="No maker offer covers this ladder">
+        {preflight.detail ? <span className="block" data-testid="preflight-detail">{preflight.detail}</span> : null}
+        <span className="block">Try a shorter horizon{preflight.detail ? ", a smaller amount or the other collateral mint" : ""}.</span>
+      </Notice>
+    );
   } else {
     button = (
       <Button
@@ -624,7 +642,7 @@ function Receipt({
               <li>Margin call below 50% of initial margin. Below 20% on three fresh marks, 30% of the position is closed.</li>
               <li>Overnight gaps can skip the liquidation line; losses then follow the waterfall: loser margin → insurance fund → winner haircut.</li>
               <li>
-                Offers come from demo makers. Prices: {quote.source === "pyth" ? "Pyth" : quote.source === "demo-override" ? "demo override (Dispatch)" : quote.source === "ecb-ref" ? "ECB reference rate (daily) — not a live feed" : "demo"}.
+                Offers come from demo makers. Prices: {sourceLabel(quote.source)}.
               </li>
             </ul>
           </div>
@@ -641,7 +659,7 @@ export function Checklist({ wallet, mint, requiredUsd }: { wallet?: WalletState;
   const bal = wallet?.balances[mint] ?? 0;
   const steps = [
     { label: "Connect wallet", sub: "Demo wallet, no extension", done: connected },
-    { label: "Get test SOL", sub: "Pays devnet fees, no value", done: connected && sol > 0 },
+    { label: "Get test SOL", sub: "At least 0.01 SOL; pays devnet fees, no value", done: connected && sol >= 0.01 },
     { label: `Get test ${mint}`, sub: `Margin + fee ${fmtUsd(requiredUsd)}; you hold ${fmtUsd(bal)}`, done: connected && bal >= requiredUsd },
   ];
   const current = steps.findIndex((s) => !s.done);

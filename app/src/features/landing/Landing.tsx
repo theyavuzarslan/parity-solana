@@ -15,6 +15,7 @@ import { Panel } from "@/components/Panel";
 import { StatusChip } from "@/components/StatusChip";
 import { WalletButton } from "@/components/WalletButton";
 import { FAUCET_AMOUNT } from "@/data/mockProvider";
+import { sourceLabel } from "@/lib/sourceLabel";
 
 export function Landing() {
   const markets = useParityQuery((d) => d.getMarkets(), [], 30_000, (d) => d.peek?.markets());
@@ -77,10 +78,7 @@ export function Landing() {
           </div>
           <p className="mt-3 text-xs text-navy-2">
             Spot source:{" "}
-            {usdtry?.source === "pyth" ? "Pyth (live)"
-              : usdtry?.source === "demo-override" ? "demo override — demo mode is on"
-              : usdtry?.source === "ecb-ref" ? "ECB reference rate (daily) — not a live feed"
-              : "demo"}.
+            {sourceLabel(usdtry?.source)}.
           </p>
         </Panel>
       </section>
@@ -152,6 +150,8 @@ function SetupCard() {
   const [solState, setSolState] = useState<"idle" | "busy" | "done" | "error">("idle");
   const [solErr, setSolErr] = useState<string | null>(null);
   const connected = wallet.value?.connected;
+  // Devnet: no in-app airdrop; the button opens faucet.solana.com for the connected wallet.
+  const devnet = info?.kind === "chain" && info.cluster === "devnet";
   return (
     <CarbonCopy
       title="Devnet setup"
@@ -188,16 +188,17 @@ function SetupCard() {
               disabled={!connected}
               loading={solState === "busy"}
               loadingLabel="Requesting…"
-              success={solState === "done" ? "SENT" : null}
+              success={solState === "done" && !devnet ? "SENT" : null}
               error={solState === "error" ? (solErr ?? "Airdrop failed — try again.") : null}
               onClick={async () => {
                 setSolState("busy");
                 try { await data.requestSol(); setSolState("done"); } catch (e) { setSolErr(e instanceof Error ? e.message : null); setSolState("error"); }
               }}
             >
-              Get 1 test SOL
+              {devnet ? "Open SOL faucet" : "Get 1 test SOL"}
             </Button>
           </div>
+          {devnet && solState === "done" ? <p className="mt-1.5 text-xs">Opened faucet.solana.com in a new tab: request devnet SOL for this wallet, then come back.</p> : null}
         </li>
         <li>
           <span className="t-label block">3 · Test collateral</span>

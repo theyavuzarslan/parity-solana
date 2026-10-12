@@ -24,8 +24,12 @@ export type RateCode =
  */
 export type MarketStatus = "OPEN" | "CLOSED" | "STALE" | "REF";
 
-/** Where a spot came from. "ecb-ref" = ECB daily reference rate (added in pass 2). */
-export type SpotSource = "pyth" | "demo-override" | "demo-static" | "ecb-ref";
+/**
+ * Where a spot came from. "ecb-ref" = ECB daily reference rate (added in pass 2).
+ * "demo-override" = preview (mock) demo mode set from Dispatch. "relay" = chain demo mode: the
+ * admin relay's reference price written on-chain (ECB daily, or Pyth via Hermes), or a Dispatch shock of it.
+ */
+export type SpotSource = "pyth" | "demo-override" | "demo-static" | "ecb-ref" | "relay";
 
 export type Tenor = 30 | 90 | 180;
 
@@ -173,7 +177,8 @@ export type Preflight =
   /** added in pass 2: the wallet holds no test SOL for fees */
   | { ok: false; reason: "need-sol" }
   | { ok: false; reason: "need-tokens"; requiredUsd: number; balanceUsd: number }
-  | { ok: false; reason: "market-closed"; status: MarketStatus }
+  /** detail (chain provider): e.g. the program has no on-chain price for this market */
+  | { ok: false; reason: "market-closed"; status: MarketStatus; detail?: string }
   /** detail (chain provider): why the maker cannot take it — tenor, capacity or maker margin */
   | { ok: false; reason: "no-offer"; detail?: string };
 
@@ -209,6 +214,10 @@ export interface FeedHealth {
   live: boolean;
   checkedAt: number | null;
   note: string;
+  /** chain: blockTime (unix s) of the newest write to the demo price account (relay or Dispatch) */
+  relayedAt?: number | null;
+  /** chain: what the admin relay forwards (NEXT_PUBLIC_RELAY_SOURCE) */
+  relaySource?: "ecb" | "hermes";
 }
 
 /** Which implementation is answering (added with the chain provider). */

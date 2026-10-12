@@ -3,7 +3,7 @@
 import { GROUP_ORDER } from "@/data/markets";
 import { useParityQuery } from "@/data/provider";
 import type { MarketQuote } from "@/data/types";
-import { fmtAge } from "@/lib/format";
+import { fmtAge, fmtStamp } from "@/lib/format";
 import { MarketLine, MarketRow } from "@/components/MarketRow";
 import { Panel } from "@/components/Panel";
 
@@ -18,8 +18,9 @@ export function MarketsBoard() {
   const ref = list.filter((m) => m.status === "REF").length;
   const groups = GROUP_ORDER.map((g) => ({ g, rows: list.filter((m) => m.group === g) })).filter((x) => x.rows.length);
 
+  const relayed = health.value?.relayedAt ? ` Prices last relayed ${fmtStamp(health.value.relayedAt)}.` : "";
   const feedLine = demo.value?.demoMode
-    ? "Demo mode is on: demo prices supersede the feed, every market shows OPEN."
+    ? `${health.value?.note ?? "Demo mode is on: demo prices supersede the feed, every market shows OPEN."}${relayed}`
     : health.value?.live
       ? `Live from Pyth Hermes · checked ${health.value.checkedAt ? fmtAge(health.value.checkedAt) : "just now"}.`
       : (health.value?.note ?? "ECB reference rate (daily) — not a live feed.");

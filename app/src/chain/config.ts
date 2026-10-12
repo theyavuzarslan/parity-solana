@@ -5,6 +5,8 @@
  *   NEXT_PUBLIC_PROGRAM_ID  Parity program id; unset -> the app runs on preview (mock) data
  *   NEXT_PUBLIC_USDC_MINT / NEXT_PUBLIC_USDG_MINT  test collateral mints (the faucet needs them;
  *                           the client prefers the mints stored in the on-chain config)
+ *   NEXT_PUBLIC_RELAY_SOURCE ecb | hermes (default ecb): what scripts/src/relay.ts forwards —
+ *                           "hermes" when the relay runs with PYTH_API_KEY. Labels only.
  */
 export type Cluster = "devnet" | "localnet";
 
@@ -16,6 +18,7 @@ export const CHAIN = {
   programId: process.env.NEXT_PUBLIC_PROGRAM_ID || null,
   usdcMint: process.env.NEXT_PUBLIC_USDC_MINT || null,
   usdgMint: process.env.NEXT_PUBLIC_USDG_MINT || null,
+  relaySource: (process.env.NEXT_PUBLIC_RELAY_SOURCE === "hermes" ? "hermes" : "ecb") as "ecb" | "hermes",
 } as const;
 
 export const isLocalnet = () => CHAIN.cluster === "localnet";

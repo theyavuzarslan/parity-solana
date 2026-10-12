@@ -63,10 +63,15 @@ export function useParityQuery<T>(
   });
   const [tick, setTick] = useState(0);
 
+  // Polling pauses while the tab is hidden (no RPC load from background tabs) and catches up once
+  // when it becomes visible again.
   useEffect(() => {
     if (!pollMs) return;
-    const id = setInterval(() => setTick((t) => t + 1), pollMs);
-    return () => clearInterval(id);
+    const isHidden = () => typeof document !== "undefined" && document.visibilityState === "hidden";
+    const id = setInterval(() => { if (!isHidden()) setTick((t) => t + 1); }, pollMs);
+    const onVis = () => { if (!isHidden()) setTick((t) => t + 1); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVis); };
   }, [pollMs]);
 
   useEffect(() => {

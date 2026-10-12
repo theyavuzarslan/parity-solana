@@ -1,6 +1,7 @@
 import { marketConfig } from "@/data/markets";
 import type { MarketQuote } from "@/data/types";
 import { cx, fmtPct, fmtPrice, fmtStamp } from "@/lib/format";
+import { relayLabel } from "@/lib/sourceLabel";
 import { STATUS_NOTE, STATUS_SUB, StatusChip } from "./StatusChip";
 
 function Cell({ children, className }: { children: React.ReactNode; className?: string }) {
@@ -12,6 +13,7 @@ export function SourceTag({ q, className }: { q: MarketQuote; className?: string
   const text =
     q.source === "demo-static" ? "demo"
     : q.source === "demo-override" ? "demo mode"
+    : q.source === "relay" ? `relayed · ${relayLabel()}`
     : q.source === "ecb-ref" ? `ECB ${fmtStamp(q.publishTime).slice(0, 6)}${q.id === "USD/CNH" ? " · CNY proxy" : ""}`
     : q.status === "CLOSED" ? `last ${fmtStamp(q.publishTime)}`
     : "Pyth";

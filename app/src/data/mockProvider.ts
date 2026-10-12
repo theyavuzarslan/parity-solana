@@ -338,7 +338,8 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
     async getDispatchLog() { return [...log]; },
     async getFeedHealth(): Promise<FeedHealth> {
       refreshLive();
-      return { live: live.ok && live.provider === "pyth", checkedAt: live.checkedAt || null, note: live.note };
+      const note = demo.demoMode ? "Demo mode is on (preview): demo prices supersede the feed, every market shows OPEN." : live.note;
+      return { live: live.ok && live.provider === "pyth", checkedAt: live.checkedAt || null, note };
     },
 
     async connect() {

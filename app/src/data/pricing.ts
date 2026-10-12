@@ -45,12 +45,12 @@ export function upqFromFeeds(market: MarketId, feeds: Partial<Record<FeedKey, nu
 export const usdPerQuote = (q: { upq: number }): number => q.upq;
 
 /**
- * Status rule: demo override → OPEN; ECB daily reference → REF (lockable on devnet,
+ * Status rule: demo override or relayed demo price → OPEN; ECB daily reference → REF (lockable on devnet,
  * labelled "not a live feed"); live price older than 120 s → CLOSED (FX weekends,
  * holidays); no feed at all → STALE.
  */
 export function marketStatus(p: { source: SpotSource; publishTime: number; nowSec: number }): MarketStatus {
-  if (p.source === "demo-override") return "OPEN";
+  if (p.source === "demo-override" || p.source === "relay") return "OPEN";
   if (p.source === "demo-static") return "STALE";
   if (p.source === "ecb-ref") return "REF";
   return p.nowSec - p.publishTime > PROTOCOL.maxPriceAgeSecs ? "CLOSED" : "OPEN";

@@ -27,6 +27,15 @@ describe("advisor empty states", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /^lock it$/i })).toBeEnabled());
   });
 
+  it("rungs under the $10 minimum notional are left out, with a note", async () => {
+    const user = userEvent.setup();
+    // $12 a month pre-filled from the wallet: the later, smaller rungs fall under $10
+    renderDesk(createMockProvider({ offline: true, connected: true, balances: { USDC: 12 } }));
+    await walkCheckIn(user, { feel: /^painful/i });
+    const note = await screen.findByTestId("under-min");
+    expect(note.textContent).toMatch(/Left out month \d \(\$\d+\.\d\d\).*below the \$10 minimum position size/);
+  });
+
   it("D3 market closed: LOCK IT disabled with the paused message and the last price time", async () => {
     const user = userEvent.setup();
     renderDesk(createMockProvider({ offline: true, connected: true, balances: { USDC: 10_000 }, forceStatus: { "USD/TRY": "CLOSED" } }));

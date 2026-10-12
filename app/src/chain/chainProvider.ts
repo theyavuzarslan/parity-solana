@@ -31,7 +31,13 @@ import { eventParser, makeProgram, programErrorName, type ParityProgram } from "
 
 const DAY = 86_400;
 const TENORS: Tenor[] = [30, 90, 180];
-const SNAP_TTL_MS = 4_000;
+/** Program accounts (config, offers, rates …) are refetched at most every 15 s, on-chain prices every
+ * 10 s, wallet balances and positions every 10 s; nothing refreshes while the tab is hidden, and
+ * concurrent reads share one in-flight request. Writes invalidate everything (afterWrite). */
+const ACCOUNTS_TTL_MS = 15_000;
+const PRICES_TTL_MS = 10_000;
+const WALLET_TTL_MS = 10_000;
+const hidden = () => typeof document !== "undefined" && document.visibilityState === "hidden";
 const QUIET = new Set(["MarketClosedOrStale", "StalePublishTime", "NotLiquidatable", "NotConfirmed", "NotMatured"]);
 const POSITION_SPACE = 8 + 32 + 8 + 32 + 32 + 2 + 32 + 8 * 3 + 8 + 8 + 8 * 3 + 1 + 1 + 8 + 8 + 1;
 
@@ -49,6 +55,9 @@ type ConfigView = {
 };
 type Snap = {
   at: number;
+  pricesAt: number;
+  /** blockTime of the newest transaction touching DemoState (relay writes, Dispatch shocks), unix s */
+  relayedAt: number | null;
   cfg: ConfigView;
   demo: { a: bigint; b: bigint; set: boolean }[];
   imBps: Map<number, number>;
@@ -79,6 +88,7 @@ export function createChainProvider(opts: ChainOptions): ParityData {
   const seed = createMockProvider({ offline: true, seedDemoPositions: false });
   let snap: Snap | null = null;
   let loading: Promise<Snap> | null = null;
+  let pricesLoading: Promise<void> | null = null;
   let live: LiveSnapshot | null = null;
   let log: DispatchEntry[] = [];
   const shocks: Partial<Record<MarketId, number>> = {};
@@ -105,10 +115,11 @@ export function createChainProvider(opts: ChainOptions): ParityData {
     const insBal = async (mint: PublicKey) => {
       try { return Number((await connection.getTokenAccountBalance(P.insurance(mint), "confirmed")).value.uiAmount ?? 0); } catch { return 0; }
     };
-    const [prices, insUsdc, insUsdg] = await Promise.all([
+    const [prices, insUsdc, insUsdg, relayedAt] = await Promise.all([
       readOnchainPrices(program, connection, cfg.admin).catch(() => new Map<number, PriceReadView>()),
       insBal(cfg.usdcMint),
       insBal(cfg.usdgMint),
+      lastDemoWrite(),
     ]);
     if (prices.size < CHAIN_MARKETS.length && (!live || Date.now() / 1000 - live.checkedAt > 30)) {
       live = await fetchLive().catch(() => null);
@@ -124,25 +135,69 @@ export function createChainProvider(opts: ChainOptions): ParityData {
       marginLocked: BigInt(o.marginLocked.toString()), positionCounter: BigInt(o.positionCounter.toString()), mint: o.mint, active: o.active,
     }));
     return {
-      at: Date.now(), cfg,
+      at: Date.now(), pricesAt: Date.now(), relayedAt, cfg,
       demo: demoRaw.prices.map((p: { a: BN; b: BN; set: boolean }) => ({ a: BigInt(p.a.toString()), b: BigInt(p.b.toString()), set: p.set })),
       imBps: new Map(marketsRaw.map(({ account: m }) => [m.id, m.imBps])),
       rates, offers, prices, insurance: { USDC: insUsdc, USDG: insUsdg },
     };
   }
 
-  /** Fresh snapshot: awaits on first use, then serves the cache and refreshes in the background. */
+  /** Relay heartbeat: one getSignaturesForAddress on DemoState (the relay writes nothing else on chain). */
+  async function lastDemoWrite(): Promise<number | null> {
+    try {
+      const [sig] = await connection.getSignaturesForAddress(P.demo(), { limit: 1 }, "confirmed");
+      return sig?.blockTime ?? null;
+    } catch { return null; }
+  }
+
+  /** Prices only (debug_price simulation), on their own shorter TTL. */
+  function refreshPrices(s: Snap) {
+    if (pricesLoading || loading) return;
+    pricesLoading = Promise.all([readOnchainPrices(program, connection, s.cfg.admin), lastDemoWrite()])
+      .then(([prices, relayedAt]) => {
+        if (snap === s) { snap = { ...s, prices, pricesAt: Date.now(), relayedAt: relayedAt ?? s.relayedAt }; notify(); }
+      })
+      .catch(() => undefined)
+      .finally(() => { pricesLoading = null; });
+  }
+
+  /** Fresh snapshot: awaits on first use, then serves the cache and refreshes in the background
+   *  (never while the tab is hidden). Concurrent callers share one load. */
   async function getSnap(force = false): Promise<Snap> {
     // A forced refresh (after a write) must not reuse a load that started before the write.
     if (force && loading) await loading.catch(() => undefined);
-    const stale = !snap || Date.now() - snap.at > SNAP_TTL_MS;
+    if (!force && snap && hidden()) return snap;
+    const stale = !snap || Date.now() - snap.at > ACCOUNTS_TTL_MS;
     if ((force || stale) && !loading) {
       loading = load().then((s) => { snap = s; loading = null; if (!force) notify(); return s; }, (e) => { loading = null; throw e; });
       if (force || !snap) return loading;
     }
     if (!snap) return loading!;
+    if (!loading && Date.now() - snap.pricesAt > PRICES_TTL_MS) refreshPrices(snap);
     return snap;
   }
+
+  /** Small TTL cache with a shared in-flight promise, keyed (e.g. by wallet); cleared by afterWrite. */
+  function cached<T>(ttlMs: number) {
+    let entry: { key: string; at: number; value?: T; pending?: Promise<T> } | null = null;
+    return {
+      get(key: string, fetcher: () => Promise<T>): Promise<T> {
+        const fresh = entry && entry.key === key && entry.value !== undefined && (Date.now() - entry.at < ttlMs || hidden());
+        if (fresh) return Promise.resolve(entry!.value!);
+        if (entry && entry.key === key && entry.pending) return entry.pending;
+        const e: { key: string; at: number; value?: T; pending?: Promise<T> } = { key, at: Date.now() };
+        entry = e;
+        e.pending = fetcher().then(
+          (v) => { if (entry === e) { e.value = v; e.at = Date.now(); e.pending = undefined; } return v; },
+          (err) => { if (entry === e) entry = null; throw err; },
+        );
+        return e.pending;
+      },
+      clear() { entry = null; },
+    };
+  }
+  const walletCache = cached<Awaited<ReturnType<typeof readWallet>>>(WALLET_TTL_MS);
+  const positionsCache = cached<{ publicKey: PublicKey; account: PositionAcct }[]>(WALLET_TTL_MS);
 
   const effNow = (s: Snap) => Math.floor(Date.now() / 1000) + (s.cfg.demoMode ? s.cfg.demoClockOffset : 0);
   const chainMeta = (id: MarketId): MarketMeta => CHAIN_MARKETS.find((m) => m.symbol === id)!;
@@ -158,7 +213,8 @@ export function createChainProvider(opts: ChainOptions): ParityData {
     let spot: number, source: SpotSource, publishTime: number, upq: number;
     if (pr) {
       spot = pr.spot; upq = pr.upq; publishTime = pr.publishTime;
-      source = s.cfg.demoMode && s.demo[meta.id]?.set ? "demo-override" : "pyth";
+      // Demo mode on devnet: the admin relay's reference price (or a Dispatch shock of it).
+      source = s.cfg.demoMode && s.demo[meta.id]?.set ? "relay" : "pyth";
     } else {
       // Fallback: the server price route (Pyth with a key, else ECB reference; metals demo).
       const lp = live?.prices ?? {};
@@ -186,6 +242,12 @@ export function createChainProvider(opts: ChainOptions): ParityData {
   // ---------- wallet ----------
   async function walletState() {
     const w = bridge.current();
+    if (!w) return readWallet();
+    return walletCache.get(w.publicKey.toBase58(), readWallet);
+  }
+
+  async function readWallet() {
+    const w = bridge.current();
     if (!w) return { connected: false, address: null, label: null, balances: { USDC: 0, USDG: 0 } as Record<Mint, number>, solBalance: 0 };
     const s = await getSnap();
     const bal = async (mint: PublicKey) => {
@@ -201,6 +263,10 @@ export function createChainProvider(opts: ChainOptions): ParityData {
     const w = bridge.current();
     if (!w) return [];
     const me = w.publicKey.toBase58();
+    return positionsCache.get(me, () => readPositionAccounts(me));
+  }
+
+  async function readPositionAccounts(me: string): Promise<{ publicKey: PublicKey; account: PositionAcct }[]> {
     const [asLong, asShort] = await Promise.all([
       program.account.position.all([{ memcmp: { offset: 48, bytes: me } }]),
       program.account.position.all([{ memcmp: { offset: 80, bytes: me } }]),
@@ -314,6 +380,8 @@ export function createChainProvider(opts: ChainOptions): ParityData {
   }
 
   async function afterWrite() {
+    walletCache.clear();
+    positionsCache.clear();
     await getSnap(true).catch(() => undefined);
     notify();
   }
@@ -431,6 +499,16 @@ export function createChainProvider(opts: ChainOptions): ParityData {
     const w = bridge.current();
     if (!w) return { ok: false, reason: "no-wallet" };
     const s = await getSnap();
+    // The program prices from debug_price's sources only (Pyth, or the relayed demo price). If it has
+    // no price for this market, an ECB fallback shown in the UI must not pass preflight.
+    if (!s.prices.has(p.meta.id)) {
+      return {
+        ok: false, reason: "market-closed", status: "STALE",
+        detail: s.cfg.demoMode
+          ? "The program has no price for this market yet: the admin relay has not written one (it does every ~10 s)."
+          : "Demo mode is off and devnet has no live Pyth FX feeds, so the program has no price to trade on. The relay turns demo mode back on at its next tick.",
+      };
+    }
     const q = quoteFor(s, p.quote.market);
     if (isPaused(q.status)) return { ok: false, reason: "market-closed", status: q.status };
     const ws = await walletState();
@@ -484,12 +562,15 @@ export function createChainProvider(opts: ChainOptions): ParityData {
     async getFeedHealth(): Promise<FeedHealth> {
       const s = await getSnap();
       const n = s.prices.size;
+      const label = CHAIN.relaySource === "hermes" ? "Pyth via Hermes" : "ECB daily";
       return {
         live: n > 0,
-        checkedAt: Math.floor(s.at / 1000),
+        checkedAt: Math.floor(s.pricesAt / 1000),
+        relayedAt: s.relayedAt,
+        relaySource: CHAIN.relaySource,
         note: s.cfg.demoMode
-          ? `On-chain prices for ${n}/15 markets (debug_price). Demo mode: admin-relayed reference prices.`
-          : `On-chain Pyth prices for ${n}/15 markets; the rest use the server price route.`,
+          ? `Devnet demo mode: admin-relayed reference prices (${label}) for ${n}/15 markets, read on-chain via debug_price. Production reads Pyth on-chain.`
+          : `Demo mode is off: on-chain Pyth prices for ${n}/15 markets. Devnet has no live Pyth FX feeds, so trading pauses until the relay turns demo mode back on.`,
       };
     },
 
@@ -508,11 +589,14 @@ export function createChainProvider(opts: ChainOptions): ParityData {
     async requestSol() {
       const w = wallet();
       if (CHAIN.cluster !== "localnet") {
+        // Devnet: no programmatic airdrop (rate-limited); open the official faucet for this wallet.
         if (typeof window !== "undefined") window.open(SOL_FAUCET_URL, "_blank", "noopener");
-        throw new Error(`Opened faucet.solana.com — request devnet SOL for ${w.publicKey.toBase58().slice(0, 8)}…, then come back.`);
+        const bal = (await connection.getBalance(w.publicKey, "confirmed").catch(() => 0)) / LAMPORTS_PER_SOL;
+        return { amount: 0, balance: bal, signature: "" };
       }
       const sig = await connection.requestAirdrop(w.publicKey, 2 * LAMPORTS_PER_SOL);
       await connection.confirmTransaction(sig, "confirmed");
+      walletCache.clear();
       notify();
       const bal = (await connection.getBalance(w.publicKey, "confirmed")) / LAMPORTS_PER_SOL;
       return { amount: 2, balance: bal, signature: sig };
@@ -591,22 +675,41 @@ export function createChainProvider(opts: ChainOptions): ParityData {
         const s = await requireAdmin();
         if (!s.cfg.demoMode) return entry(`SHOCK ${market} ${pct > 0 ? "+" : ""}${pct}%`, "Refused — demo mode is off.");
         const meta = chainMeta(market);
-        const pr = s.prices.get(meta.id);
-        const slot = s.demo[meta.id];
-        // set_demo_price takes FEED-level prices at 1e8. Scaling feed A scales the composed spot
-        // by the same factor for every op (A, A×B, A÷B); feed B is kept.
-        const a = slot?.set ? slot.a : pr?.a;
-        const b = slot?.set ? slot.b : (pr?.b ?? 0n);
-        if (!a) throw new Error(`No current price for ${market} to shock.`);
         const f = 1 + pct / 100;
-        const a2 = BigInt(Math.round(Number(a) * f));
-        const sig = await send([await program.methods.setDemoPrice(meta.id, new BN(a2.toString()), new BN(meta.feedB ? b.toString() : "0"), true)
-          .accountsPartial({ config: P.config(), admin: wallet().publicKey, demoState: P.demo() }).instruction()]);
-        shocks[market] = (shocks[market] ?? 1) * f;
-        const prev = pr?.spot;
+        // set_demo_price takes FEED-level prices at 1e8. A single-feed market shocks its FEED in
+        // every slot that uses it (USD/TRY: feed A of USD/TRY, feed B of EUR/TRY, GBP/TRY, GAU/TRY),
+        // so the crosses move with it. A cross (A×B) scales its own feed A only (spot × f).
+        const feed = meta.feedAKey;
+        type Target = { mk: MarketMeta; leg: "a" | "b" };
+        const targets: Target[] = meta.feedBKey
+          ? [{ mk: meta, leg: "a" }]
+          : CHAIN_MARKETS.flatMap((mk): Target[] => (mk.feedAKey === feed ? [{ mk, leg: "a" }] : mk.feedBKey === feed ? [{ mk, leg: "b" }] : []));
+        const scale = (x: bigint) => BigInt(Math.round(Number(x) * f));
+        const ixs: TransactionInstruction[] = [];
+        const moved: { mk: MarketMeta; before?: number }[] = [];
+        const skipped: string[] = [];
+        for (const { mk, leg } of targets) {
+          const slot = s.demo[mk.id];
+          const pr = s.prices.get(mk.id);
+          const a = slot?.set ? slot.a : pr?.a;
+          const b = mk.feedBKey ? (slot?.set ? slot.b : pr?.b) : 0n;
+          if (!a || (mk.feedBKey && !b)) { skipped.push(mk.symbol); continue; }
+          const a2 = leg === "a" ? scale(a) : a;
+          const b2 = mk.feedBKey ? (leg === "b" ? scale(b!) : b!) : 0n;
+          ixs.push(await program.methods.setDemoPrice(mk.id, new BN(a2.toString()), new BN(b2.toString()), true)
+            .accountsPartial({ config: P.config(), admin: wallet().publicKey, demoState: P.demo() }).instruction());
+          moved.push({ mk, before: pr?.spot });
+        }
+        if (!ixs.length) throw new Error(`No current price for ${market} to shock.`);
+        const sig = await send(ixs);
+        for (const { mk } of moved) shocks[mk.symbol as MarketId] = (shocks[mk.symbol as MarketId] ?? 1) * f;
         await afterWrite();
-        const next = (await getSnap()).prices.get(meta.id)?.spot;
-        return entry(`SHOCK ${market} ${pct > 0 ? "+" : "−"}${Math.abs(pct)}%`, `Spot ${prev?.toFixed(4) ?? "?"} → ${next?.toFixed(4) ?? "?"} (feed A ${Number(a) / 1e8} → ${Number(a2) / 1e8}) · tx ${shortSig(sig)}`);
+        const after = (await getSnap()).prices;
+        const parts = moved.map(({ mk, before }) => `${mk.symbol} ${before?.toFixed(4) ?? "?"} → ${after.get(mk.id)?.spot.toFixed(4) ?? "?"}`);
+        return entry(
+          `SHOCK ${market} ${pct > 0 ? "+" : "−"}${Math.abs(pct)}%`,
+          `${meta.feedBKey ? "" : `Feed ${feed.replace("_", "/")} ×${f.toFixed(4)}: `}${parts.join(" · ")}${skipped.length ? ` · no price, skipped ${skipped.join(", ")}` : ""} · tx ${shortSig(sig)}`,
+        );
       },
       async advanceClock(days) {
         const s = await requireAdmin();
@@ -630,10 +733,18 @@ export function createChainProvider(opts: ChainOptions): ParityData {
       settle: () => crankAll("settle"),
       async reset() {
         const s = await requireAdmin();
-        const sig = await send([await program.methods.setDemoClock(new BN(0)).accountsPartial({ config: P.config(), admin: wallet().publicKey }).instruction()]);
         for (const k of Object.keys(shocks)) delete shocks[k as MarketId];
+        if (!s.cfg.demoMode) return entry("RESET", "Demo mode is off: no clock or demo prices to reset (the relay turns demo mode back on at its next tick).");
+        // Clock back to +0 and every demo price slot cleared (set = false) in one transaction. A
+        // cleared slot is the relay's resync marker: its next tick rewrites the reference price.
+        const admin = wallet().publicKey;
+        const ixs: TransactionInstruction[] = [await program.methods.setDemoClock(new BN(0)).accountsPartial({ config: P.config(), admin }).instruction()];
+        for (const mk of CHAIN_MARKETS) {
+          ixs.push(await program.methods.setDemoPrice(mk.id, new BN(0), new BN(0), false).accountsPartial({ config: P.config(), admin, demoState: P.demo() }).instruction());
+        }
+        const sig = await send(ixs);
         await afterWrite();
-        return entry("RESET", `Demo clock back to +0 · tx ${shortSig(sig)}. Shocked prices stay until the relay writes its next reference price${s.cfg.demoMode ? "" : ""}.`);
+        return entry("RESET", `Demo clock back to +0 and all ${CHAIN_MARKETS.length} demo prices cleared · tx ${shortSig(sig)}. Reference prices return on the relay's next tick (~10 s); until then markets read as paused.`);
       },
     },
 

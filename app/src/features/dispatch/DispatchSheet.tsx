@@ -65,7 +65,9 @@ export function DispatchSheet() {
         <Panel title="Demo mode" aside={demoOn ? <DemoChip /> : <span>Off</span>}>
           <div className="flex flex-col gap-4 border-y-2 border-navy bg-coupon px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
             <p className="max-w-prose text-sm text-navy-2">
-              On: demo prices supersede the feed for every market, markets read OPEN, demo coupons No. 0001–0005 appear, shocks and clock moves are allowed. Off (default): real prices — Pyth with an API key, otherwise the ECB daily reference rate — and real market hours.
+              {chain
+                ? "On (the devnet default): the program prices every market from the admin relay's reference prices, so markets read OPEN and shocks and clock moves are allowed. Off: the program reads Pyth price accounts only — devnet has no live Pyth FX feeds, so turning demo mode off pauses trading (and clears shocks and the clock). The relay turns it back on at its next tick."
+                : "On: demo prices supersede the feed for every market, markets read OPEN, demo coupons No. 0001–0005 appear, shocks and clock moves are allowed. Off (default): real prices — Pyth with an API key, otherwise the ECB daily reference rate — and real market hours."}
             </p>
             <button
               type="button"
@@ -91,7 +93,8 @@ export function DispatchSheet() {
           </div>
         </Panel>
 
-        <Panel title="Price shocks" aside={<span>Per market · demo mode only</span>}>
+        <Panel title="Price shocks" aside={<span>Per feed · demo mode only</span>}>
+          <p className="mb-2 max-w-prose text-sm text-navy-2">A single-feed market shocks its feed everywhere it is used: USD/TRY also moves EUR/TRY, GBP/TRY and GAU/TRY. A cross shocks only itself.{chain ? " Reset demo state clears every demo price; the relay rewrites the reference prices at its next tick. In Hermes mode the relay overwrites shocks each tick." : ""}</p>
           <div className="border-y-2 border-navy bg-coupon">
             {MARKETS.map((m) => {
               const q = markets.value?.find((x) => x.id === m.id);
