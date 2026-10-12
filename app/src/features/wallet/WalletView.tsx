@@ -64,7 +64,7 @@ export function WalletView() {
             <h1 id="wallet-t" className="t-display text-3xl text-navy md:text-[3rem]">Wallet</h1>
             <p className="mt-2 max-w-prose text-navy-2">
               Every locked rate is a coupon, newest on top. Stamps record what happened to it.
-              {demo.value?.demoMode ? " Coupons No. 0001–0005 are demo history (demo mode)." : ""}
+              {demo.value?.demoMode && !list.some((p) => !p.demo) && list.some((p) => p.demo) ? " Coupons No. 0001–0005 are demo history (demo mode)." : ""}
             </p>
           </div>
           {active.length ? (

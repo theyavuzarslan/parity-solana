@@ -34,7 +34,7 @@ import { CheckIn, PairSwitch } from "./CheckIn";
 type LockState =
   | { kind: "idle" }
   | { kind: "signing" }
-  | { kind: "done"; positions: Position[]; lq: LadderQuote }
+  | { kind: "done"; positions: Position[]; lq: LadderQuote; signature: string }
   | { kind: "error"; message: string };
 
 
@@ -134,7 +134,7 @@ export function AdvisorDesk() {
     setLock({ kind: "signing" });
     try {
       const res = await data.lockLadder(lockReq);
-      setLock({ kind: "done", positions: res.positions, lq: lqLock });
+      setLock({ kind: "done", positions: res.positions, lq: lqLock, signature: res.signature });
     } catch (e) {
       setLock({ kind: "error", message: e instanceof Error ? e.message : "The transaction failed." });
     }
@@ -331,6 +331,7 @@ function ActionBar({
   lqLock: LadderQuote | null; hasRungs: boolean; preflight: Preflight | null; lock: LockState; onLock: () => void; mint: Mint; quote?: MarketQuote;
 }) {
   const { data } = useParity();
+  const { value: info } = useParityQuery((d) => (d.info ? d.info() : Promise.resolve(null)));
   const [busy, setBusy] = useState<null | "connect" | "sol" | "faucet">(null);
   const [err, setErr] = useState<string | null>(null);
   const run = async (k: "connect" | "sol" | "faucet", fn: () => Promise<unknown>) => {
@@ -421,7 +422,7 @@ function ActionBar({
     );
     notice = lqLock ? (
       <p className="text-xs text-navy-2">
-        One signature, {lqLock.rungs.length} forward{lqLock.rungs.length > 1 ? "s" : ""}, {fmtUsd(lqLock.requiredUsd)} test {lqLock.mint} posted. Mock signing — nothing is sent to devnet yet.
+        One signature, {lqLock.rungs.length} forward{lqLock.rungs.length > 1 ? "s" : ""}, {fmtUsd(lqLock.requiredUsd)} test {lqLock.mint} posted. {info?.kind === "chain" ? `Signed by your wallet, sent to ${info.cluster}.` : "Mock signing — nothing is sent to devnet yet."}
       </p>
     ) : null;
   }
@@ -522,7 +523,7 @@ function LockedBook({ lock }: { lock: Extract<LockState, { kind: "done" }> }) {
         {lock.positions.map((p, i) => {
           const common = {
             index: i + 1, market: p.market, side: p.side, tenorDays: p.tenorDays, strike: p.strike, notionalUsd: p.notionalUsd,
-            lockedAmount: p.quantity * p.strike, maturity: p.maturity, mint: p.mint, no: p.no, status: "LOCKED" as const, tag: "MOCK TX · DEMO",
+            lockedAmount: p.quantity * p.strike, maturity: p.maturity, mint: p.mint, no: p.no, status: "LOCKED" as const, tag: p.demo ? "MOCK TX · DEMO" : `TX ${lock.signature.slice(0, 8)}…`,
           };
           return (
             <li key={p.id}>

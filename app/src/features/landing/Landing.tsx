@@ -145,6 +145,7 @@ export function Landing() {
 
 function SetupCard() {
   const { data } = useParity();
+  const { value: info } = useParityQuery((d) => (d.info ? d.info() : Promise.resolve(null)));
   const wallet = useParityQuery((d) => d.getWallet());
   const [mint, setMint] = useState<Mint>("USDC");
   const [state, setState] = useState<"idle" | "busy" | "done" | "error">("idle");
@@ -233,7 +234,7 @@ function SetupCard() {
           {!connected ? <p className="mt-1.5 text-xs">Connect first; the faucet pays the connected wallet.</p> : null}
         </li>
       </ol>
-      <p className="mt-3 text-xs">Mock faucet and wallet for this preview; test tokens have no value.</p>
+      <p className="mt-3 text-xs">{info?.kind === "chain" ? `Faucet mints test USDC and USDG on ${info.cluster}; test SOL comes from faucet.solana.com. Test tokens have no value.` : "Mock faucet and wallet for this preview; test tokens have no value."}</p>
     </CarbonCopy>
   );
 }

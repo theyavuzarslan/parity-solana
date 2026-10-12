@@ -7,6 +7,7 @@ import { cx, fmtDate, fmtPrice, fmtUsd } from "@/lib/format";
 import { fmtCcy, routeOf, sideWord } from "@/lib/currency";
 import { Num } from "./Num";
 import { Stamp, type StampKind } from "./Stamp";
+import { useTheme } from "@/lib/theme";
 
 export interface CouponProps {
   index: number;
@@ -125,6 +126,8 @@ export function Coupon(p: CouponProps) {
 
 /** The blank coupon of an empty wallet: dashed edge, empty ruled fields, "—". */
 export function BlankCoupon({ children, label = "NO TICKETS YET", index }: { children?: ReactNode; label?: string; index?: number }) {
+  const { theme } = useTheme();
+  if (theme === "solana") return <BlankRow label={label} index={index}>{children}</BlankRow>;
   return (
     <div className="ticket-shell" data-flat="">
       <article className="ticket" data-blank="" aria-label={`Blank coupon: ${label.toLowerCase()}`}>
@@ -159,5 +162,27 @@ export function BlankCoupon({ children, label = "NO TICKETS YET", index }: { chi
         </div>
       </article>
     </div>
+  );
+}
+
+/** Solana skin of the blank coupon: an empty position row (same aria-label as the ticket). */
+function BlankRow({ children, label, index }: { children?: ReactNode; label: string; index?: number }) {
+  const words = label.charAt(0) + label.slice(1).toLowerCase();
+  return (
+    <article className="pos-row rounded-[8px] border border-dashed border-hairline bg-coupon px-3 py-3 sm:px-4" aria-label={`Blank coupon: ${label.toLowerCase()}`}>
+      <div className="grid grid-cols-[1.75rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1">
+        <span className="t-num flex size-7 items-center justify-center rounded-[6px] border border-dashed border-hairline text-sm text-navy-2">{index ?? "—"}</span>
+        <div className="min-w-0">
+          <p className="text-sm text-navy-2">{words}</p>
+          <p className="text-xs text-navy-2">market — · strike — · notional —</p>
+        </div>
+        <span className="t-num text-base text-navy-2">—</span>
+        <div className="col-span-2 col-start-2 mt-1.5">
+          <div className="h-1 rounded-full bg-hairline" aria-hidden />
+          <p className="mt-1 flex justify-between text-xs text-navy-2"><span>today</span><span className="t-num">settles —</span></p>
+        </div>
+      </div>
+      {children ? <div className="mt-3 border-t border-hairline pt-3 sm:ml-[2.5rem]">{children}</div> : null}
+    </article>
   );
 }

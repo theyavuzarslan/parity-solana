@@ -13,8 +13,10 @@ const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 export function devRefusal(req: Request): string | null {
   if (process.env.NEXT_PUBLIC_CLUSTER !== "localnet") return "The local test wallet only exists on localnet.";
-  const host = new URL(req.url).hostname;
-  if (!LOCAL_HOSTS.has(host)) return "The local test wallet only answers on localhost.";
+  // Both the Host header and the URL must be local (Next may build req.url from its bind address).
+  const hostHeader = (req.headers.get("host") ?? "").replace(/:\d+$/, "");
+  const urlHost = new URL(req.url).hostname;
+  if (!LOCAL_HOSTS.has(hostHeader) || !LOCAL_HOSTS.has(urlHost)) return "The local test wallet only answers on localhost.";
   return null;
 }
 

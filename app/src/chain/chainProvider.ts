@@ -224,7 +224,8 @@ export function createChainProvider(opts: ChainOptions): ParityData {
 
   async function present(s: Snap, all: { publicKey: PublicKey; account: PositionAcct }[]): Promise<Position[]> {
     const me = bridge.current()?.publicKey;
-    const ordered = [...all].sort((a, b) => Number(a.account.openedAt.toString()) - Number(b.account.openedAt.toString()));
+    const n = (x: { toString(): string }) => Number(x.toString());
+    const ordered = [...all].sort((a, b) => n(a.account.openedAt) - n(b.account.openedAt) || n(a.account.maturity) - n(b.account.maturity));
     const now = effNow(s);
     return Promise.all(ordered.map(async ({ publicKey, account: a }, i) => {
       const meta = CHAIN_MARKETS.find((m) => m.id === a.marketId)!;
