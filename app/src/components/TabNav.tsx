@@ -44,7 +44,7 @@ export function TopTabs() {
 export function BottomTabs() {
   const path = usePathname();
   return (
-    <nav aria-label="Main" className="bottom-tabs fixed inset-x-0 bottom-0 z-40 border-t-2 border-navy bg-navy pb-[env(safe-area-inset-bottom)] md:hidden">
+    <nav aria-label="Main" className="bottom-tabs fixed inset-x-0 bottom-0 z-40 border-t-2 border-[var(--tabbar-rule)] bg-[var(--tabbar-bg)] pb-[env(safe-area-inset-bottom)] md:hidden">
       <ul className="grid grid-cols-4">
         {TABS.map((t) => {
           const on = path.startsWith(t.href);
@@ -54,11 +54,11 @@ export function BottomTabs() {
                 href={t.href}
                 aria-current={on ? "page" : undefined}
                 className={cx(
-                  "t-label flex h-14 flex-col items-center justify-center gap-1 text-xs transition-colors duration-150 active:bg-navy-2",
-                  on ? "text-coupon" : "text-copy",
+                  "t-label flex h-14 flex-col items-center justify-center gap-1 text-xs transition-colors duration-150 active:bg-[var(--tabbar-press)]",
+                  on ? "bg-[var(--tabbar-on-bg)] text-[var(--tabbar-ink-on)]" : "text-[var(--tabbar-ink)]",
                 )}
               >
-                <span aria-hidden className={cx("tab-mark h-1 w-6 -skew-x-[20deg]", on ? "bg-red" : "bg-transparent")} />
+                <span aria-hidden className={cx("tab-mark h-1 w-6 -skew-x-[20deg]", on ? "bg-[var(--tabbar-mark)]" : "bg-transparent")} />
                 {t.label}
               </Link>
             </li>

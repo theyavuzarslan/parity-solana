@@ -1,16 +1,17 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { createMockProvider } from "./mockProvider";
+import { createAutoProvider } from "./autoProvider";
 import type { ParityData } from "./types";
 
 /**
- * The one place that decides which ParityData implementation the app uses.
- * The chain task swaps `createMockProvider()` for the Anchor/devnet provider.
+ * The one place that decides which ParityData implementation the app uses:
+ * the Anchor provider when NEXT_PUBLIC_PROGRAM_ID is set and its config account exists,
+ * else the mock ("Preview data"). See ./autoProvider.ts.
  */
 let singleton: ParityData | null = null;
 function defaultProvider(): ParityData {
-  if (!singleton) singleton = createMockProvider();
+  if (!singleton) singleton = createAutoProvider();
   return singleton;
 }
 

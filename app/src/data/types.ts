@@ -169,7 +169,8 @@ export type Preflight =
   | { ok: false; reason: "need-sol" }
   | { ok: false; reason: "need-tokens"; requiredUsd: number; balanceUsd: number }
   | { ok: false; reason: "market-closed"; status: MarketStatus }
-  | { ok: false; reason: "no-offer" };
+  /** detail (chain provider): why the maker cannot take it — tenor, capacity or maker margin */
+  | { ok: false; reason: "no-offer"; detail?: string };
 
 export interface LockResult {
   signature: string;
@@ -203,6 +204,19 @@ export interface FeedHealth {
   live: boolean;
   checkedAt: number | null;
   note: string;
+}
+
+/** Which implementation is answering (added with the chain provider). */
+export interface ProviderInfo {
+  /** chain: the deployed program; preview: the in-memory mock ("Preview data") */
+  kind: "chain" | "preview";
+  cluster: "devnet" | "localnet" | null;
+  /** config.admin (chain only) */
+  admin: string | null;
+  /** connected wallet == config.admin (mock: always true, Dispatch is open) */
+  isAdmin: boolean;
+  /** insurance fund balances per collateral mint, test USD (chain only) */
+  insurance?: Record<Mint, number>;
 }
 
 export interface ParityData {
@@ -246,6 +260,9 @@ export interface ParityData {
     settle(): Promise<DispatchEntry>;
     reset(): Promise<DispatchEntry>;
   };
+
+  /** Added with the chain provider (optional): which implementation answers, and admin access. */
+  info?(): Promise<ProviderInfo>;
 
   /** Notifies after any state change so views can refetch. Returns unsubscribe. */
   subscribe(listener: () => void): () => void;

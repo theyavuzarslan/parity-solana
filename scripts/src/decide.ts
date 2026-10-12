@@ -1,18 +1,2 @@
-// Pure crank decision for one position. `status` accepts the Rust name (Open) or the Anchor
-// TS enum key (open / partiallyLiquidated). Liquidation is only possible before maturity
-// (the program rejects it afterwards), so a matured live position is only ever settled.
-export type Crank = "settle" | "liquidate" | "mark";
-
-const LIVE = new Set(["open", "called", "partiallyliquidated"]);
-
-/** Open / Called / PartiallyLiquidated (either casing) can still be cranked. */
-export function isLive(status: string): boolean {
-  return LIVE.has(status.toLowerCase());
-}
-
-export function decide(p: { status: string; breachCount: number; confirmMarks: number; now: number; maturity: number }): Crank[] {
-  if (!isLive(p.status)) return [];
-  if (p.now >= p.maturity) return ["settle"];
-  if (p.breachCount >= p.confirmMarks) return ["mark", "liquidate"];
-  return ["mark"];
-}
+// Moved to shared/src/decide.ts (the app's Dispatch crank uses the same decision).
+export * from "../../shared/src/decide.js";

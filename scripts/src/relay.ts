@@ -114,6 +114,11 @@ async function getQuotes(): Promise<Quotes> {
   return fromFrankfurter();
 }
 
+// Last (A, B) this relay wrote per market. A market is only rewritten when its *source* value
+// changes, so a shock applied on-chain from the app's Dispatch sheet persists until the source
+// moves (daily in ECB mode; about every tick in Hermes mode). Empty at startup -> compare on-chain.
+const lastSent = new Map<number, string>();
+
 async function tick(p: any, admin: any) {
   const q = await getQuotes();
   const shock = currentShock();
@@ -123,12 +128,16 @@ async function tick(p: any, admin: any) {
   const demo: any = await p.account.demoState.fetch(demoPda());
   const ixs = [];
   const changed: string[] = [];
+  const pending = new Map<number, string>();
   for (const mk of MARKETS) {
     const a = px[mk.feedAKey], b = mk.feedBKey ? px[mk.feedBKey] : 0;
     if (!a || (mk.feedBKey && !b)) { console.warn(`  no price for ${mk.symbol}`); continue; }
     const A = e8(a), B = mk.feedBKey ? e8(b!) : 0n;
+    const key = `${A}:${B}`;
+    if (lastSent.get(mk.id) === key) continue;
     const cur = demo.prices[mk.id];
-    if (cur.set && BigInt(cur.a.toString()) === A && BigInt(cur.b.toString()) === B) continue;
+    if (cur.set && BigInt(cur.a.toString()) === A && BigInt(cur.b.toString()) === B) { lastSent.set(mk.id, key); continue; }
+    pending.set(mk.id, key);
     changed.push(mk.symbol);
     ixs.push(await p.methods.setDemoPrice(mk.id, new BN(A.toString()), new BN(B.toString()), true)
       .accountsPartial({ config: configPda(), admin: admin.publicKey, demoState: demoPda() }).instruction());
@@ -140,6 +149,7 @@ async function tick(p: any, admin: any) {
     return;
   }
   const sig = await sendBatch(p, ixs);
+  for (const [id, key] of pending) lastSent.set(id, key);
   console.log(`[relay] ${new Date().toISOString()} source=${q.source}${shockTxt} USD/TRY=${usdtry} set ${changed.length} markets  ${sig}`);
 }
 

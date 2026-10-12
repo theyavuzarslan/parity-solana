@@ -64,6 +64,14 @@
   --ticket-edge: var(--color-navy);
   --ticket-drop: 4px 4px 0 var(--color-navy);
   --color-rule-strong: var(--color-navy);
+  /* phone tab bar (theme-swappable) */
+  --tabbar-bg: var(--color-navy);
+  --tabbar-rule: var(--color-navy);
+  --tabbar-ink: var(--color-copy);
+  --tabbar-ink-on: var(--color-coupon);
+  --tabbar-mark: var(--color-red);
+  --tabbar-on-bg: transparent;
+  --tabbar-press: var(--color-navy-2);
   color-scheme: light;
 }
 
@@ -395,7 +403,6 @@ input[type="number"] {
 [data-theme="solana"] .route-arrow { color: var(--color-navy-2); }
 [data-theme="solana"] .wordmark-accent { background: var(--color-navy-2); }
 [data-theme="solana"] .tab-notch { display: none; }
-[data-theme="solana"] .tab-mark.bg-red { background: var(--color-navy); }
 [data-theme="solana"] .tab-link[aria-current="page"] { background: var(--color-coupon); color: var(--color-navy); border-color: var(--color-hairline); border-radius: 8px 8px 0 0; }
 [data-theme="solana"] .chip.text-ok { color: var(--color-navy); border-color: var(--color-rule); }
 [data-theme="solana"] .pnl.text-carbon,
@@ -429,7 +436,15 @@ input[type="number"] {
 [data-theme="solana"] .check-tick.bg-carbon { background: var(--color-navy); }
 [data-theme="solana"] .void-edge { opacity: 0.6; }
 [data-theme="solana"] [role="meter"] .bg-carbon { background: var(--color-navy-2); opacity: 0.55; }
-[data-theme="solana"] .bottom-tabs { background: var(--color-coupon); border-top: 1px solid var(--color-hairline); }
-[data-theme="solana"] .bottom-tabs a { color: var(--color-navy-2); }
-[data-theme="solana"] .bottom-tabs a[aria-current="page"] { color: var(--color-navy); }
-[data-theme="solana"] .bottom-tabs a:active { background: var(--color-hairline); }
+/* Phone tab bar: graphite surface, hairline top rule, active tab as a soft pill (no red mark). */
+:root[data-theme="solana"] {
+  --tabbar-bg: var(--color-coupon);
+  --tabbar-rule: var(--color-hairline);
+  --tabbar-ink: var(--color-navy-2);
+  --tabbar-ink-on: var(--color-navy);
+  --tabbar-mark: transparent;
+  --tabbar-on-bg: var(--color-hairline);
+  --tabbar-press: var(--color-hairline);
+}
+[data-theme="solana"] .bottom-tabs { border-top-width: 1px; }
+[data-theme="solana"] .bottom-tabs a { border-radius: 10px; margin: 6px 4px; height: 2.75rem; }

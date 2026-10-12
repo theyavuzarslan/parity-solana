@@ -5,7 +5,7 @@ import { useParity, useParityQuery } from "@/data/provider";
 import { cx, fmtNum, shortAddr } from "@/lib/format";
 import { Button } from "./Button";
 
-/** Mock wallet connect. Shows the demo address and test balances once connected. */
+/** Wallet connect (mock or a real Solana wallet). Shows the address and test balances once connected. */
 export function WalletButton({ compact }: { compact?: boolean }) {
   const { data } = useParity();
   const { value: w } = useParityQuery((d) => d.getWallet());
@@ -28,14 +28,14 @@ export function WalletButton({ compact }: { compact?: boolean }) {
         <button
           type="button"
           onClick={() => data.disconnect()}
-          title="Disconnect demo wallet"
+          title={`Disconnect ${w.label ?? "wallet"}`}
           className={cx(
             "group flex h-10 items-center gap-2 rounded-[4px] border-2 border-navy bg-coupon px-3 transition-[background-color,transform] duration-150 hover:bg-hairline active:scale-[0.97]",
           )}
         >
           <span aria-hidden className="size-2 rounded-full bg-ok" />
           <span className="t-num text-sm text-navy">{shortAddr(w.address)}</span>
-          <span className="t-label hidden text-xs text-navy-2 sm:inline group-hover:hidden">MOCK</span>
+          <span className="t-label hidden max-w-32 truncate text-xs text-navy-2 sm:inline group-hover:hidden">{w.label?.includes("mock") ? "MOCK" : (w.label ?? "")}</span>
           <span className="t-label hidden text-xs text-navy-2 group-hover:inline">DISCONNECT</span>
         </button>
       </div>

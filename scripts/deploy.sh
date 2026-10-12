@@ -27,6 +27,11 @@ echo "== deployer balance: $(solana balance -u "$URL" -k "$WALLET")"
 if [ -z "${SKIP_BUILD:-}" ]; then anchor build; fi
 grep -q "declare_id!(\"$PROGRAM_ID\")" programs/parity/src/lib.rs || { echo "declare_id mismatch" >&2; exit 1; }
 grep -q "\"address\": \"$PROGRAM_ID\"" target/idl/parity.json || { echo "IDL address mismatch" >&2; exit 1; }
+# The app reads the IDL from shared/idl (committed; target/ is gitignored). Keep it in sync.
+if ! cmp -s target/idl/parity.json shared/idl/parity.json; then
+  cp target/idl/parity.json shared/idl/parity.json && cp target/types/parity.ts shared/idl/parity.ts
+  echo "  done  shared/idl updated from target/idl (commit it)"
+fi
 
 if solana program show "$PROGRAM_ID" -u "$URL" >/dev/null 2>&1 && [ -z "${UPGRADE:-}" ]; then
   echo "  skip  program already deployed (UPGRADE=1 to redeploy)"

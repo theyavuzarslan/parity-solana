@@ -517,6 +517,8 @@ export function createMockProvider(opts: MockOptions = {}): ParityData & { _debu
       return () => { listeners.delete(listener); };
     },
 
+    async info() { return { kind: "preview" as const, cluster: null, admin: null, isAdmin: true }; },
+
     _debug: () => ({ demo, wallet, live, positions }),
   };
 

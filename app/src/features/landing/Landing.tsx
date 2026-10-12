@@ -145,10 +145,12 @@ export function Landing() {
 
 function SetupCard() {
   const { data } = useParity();
+  const { value: info } = useParityQuery((d) => (d.info ? d.info() : Promise.resolve(null)));
   const wallet = useParityQuery((d) => d.getWallet());
   const [mint, setMint] = useState<Mint>("USDC");
   const [state, setState] = useState<"idle" | "busy" | "done" | "error">("idle");
   const [solState, setSolState] = useState<"idle" | "busy" | "done" | "error">("idle");
+  const [solErr, setSolErr] = useState<string | null>(null);
   const connected = wallet.value?.connected;
   return (
     <CarbonCopy
@@ -187,10 +189,10 @@ function SetupCard() {
               loading={solState === "busy"}
               loadingLabel="Requesting…"
               success={solState === "done" ? "SENT" : null}
-              error={solState === "error" ? "Airdrop failed — try again." : null}
+              error={solState === "error" ? (solErr ?? "Airdrop failed — try again.") : null}
               onClick={async () => {
                 setSolState("busy");
-                try { await data.requestSol(); setSolState("done"); } catch { setSolState("error"); }
+                try { await data.requestSol(); setSolState("done"); } catch (e) { setSolErr(e instanceof Error ? e.message : null); setSolState("error"); }
               }}
             >
               Get 1 test SOL
@@ -233,7 +235,7 @@ function SetupCard() {
           {!connected ? <p className="mt-1.5 text-xs">Connect first; the faucet pays the connected wallet.</p> : null}
         </li>
       </ol>
-      <p className="mt-3 text-xs">Mock faucet and wallet for this preview; test tokens have no value.</p>
+      <p className="mt-3 text-xs">{info?.kind === "chain" ? `Faucet mints test USDC and USDG on ${info.cluster}. Get test SOL from faucet.solana.com first: the token faucet only serves wallets holding at least 0.01 SOL. Test tokens have no value.` : "Mock faucet and wallet for this preview; test tokens have no value."}</p>
     </CarbonCopy>
   );
 }
