@@ -15,10 +15,13 @@ case "$CLUSTER" in
   localnet) URL="${RPC_URL:-http://127.0.0.1:8899}" ;;
   *) echo "CLUSTER must be devnet|localnet" >&2; exit 1 ;;
 esac
+# Never print RPC credentials: show scheme://host only (drops paths like /<token>/ and ?api-key=...).
+# Note: the full URL is still passed to solana/anchor as an argument, so it is visible in `ps` on this machine.
+URL_SAFE="$(printf '%s' "$URL" | sed -E 's#^([a-zA-Z]+://[^/?]+).*#\1#')"
 WALLET="${DEPLOYER_KEYPAIR:-$HOME/.config/solana/id.json}"
 PROGRAM_KP="$ROOT/keys/parity-program-keypair.json"
 PROGRAM_ID="$(solana-keygen pubkey "$PROGRAM_KP")"
-echo "== cluster=$CLUSTER url=$URL program=$PROGRAM_ID deployer=$(solana-keygen pubkey "$WALLET")"
+echo "== cluster=$CLUSTER url=$URL_SAFE program=$PROGRAM_ID deployer=$(solana-keygen pubkey "$WALLET")"
 echo "== deployer balance: $(solana balance -u "$URL" -k "$WALLET")"
 
 if [ -z "${SKIP_BUILD:-}" ]; then anchor build; fi

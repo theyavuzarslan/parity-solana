@@ -11,6 +11,7 @@
 // ONCE=1 runs a single tick and exits.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { Transaction } from "@solana/web3.js";
 import { BN, CLUSTER, KEYS, configPda, demoPda, deployer, program } from "./env.js";
 import { FEEDS, MARKETS, type FeedKey } from "./markets.js";
@@ -19,26 +20,45 @@ const INTERVAL = Number(process.env.RELAY_INTERVAL_MS ?? 10_000);
 const XAU_REF = Number(process.env.XAU_USD_REF ?? 4000);
 const XAG_REF = Number(process.env.XAG_USD_REF ?? 48);
 
-type Quotes = { source: string; prices: Partial<Record<FeedKey, number>> };
+export type Quotes = { source: string; prices: Partial<Record<FeedKey, number>> };
 
-export async function fromHermes(apiKey: string): Promise<Quotes> {
+export const HERMES_STALE_SECS = 120;
+
+/** Hermes latest prices. Feeds that are absent are left out (the caller fills them from the fallback);
+ *  feeds older than HERMES_STALE_SECS are kept but warned about (FX closes at weekends). */
+export async function fromHermes(apiKey: string, warn: (m: string) => void = console.warn): Promise<Quotes> {
   const qs = Object.values(FEEDS).map((id) => `ids[]=${id}`).join("&");
   const res = await fetch(`https://hermes.pyth.network/v2/updates/price/latest?${qs}&parsed=true`, {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
   if (!res.ok) throw new Error(`hermes ${res.status}`);
   const j: any = await res.json();
-  const byId = new Map<string, any>(j.parsed.map((p: any) => [p.id.replace(/^0x/, ""), p.price]));
+  return parseHermes(j, Math.floor(Date.now() / 1000), warn);
+}
+
+export function parseHermes(j: any, nowSecs: number, warn: (m: string) => void = console.warn): Quotes {
+  const byId = new Map<string, any>((j.parsed ?? []).map((p: any) => [String(p.id).replace(/^0x/, ""), p.price]));
   const prices: Quotes["prices"] = {};
   let oldest = Infinity;
   for (const [k, id] of Object.entries(FEEDS) as [FeedKey, string][]) {
     const p = byId.get(id);
     if (!p) continue;
     prices[k] = Number(p.price) * 10 ** Number(p.expo);
-    oldest = Math.min(oldest, p.publish_time);
+    const age = nowSecs - Number(p.publish_time);
+    if (age > HERMES_STALE_SECS) warn(`[relay] WARN hermes ${k} publish_time is ${age}s old (> ${HERMES_STALE_SECS}s; market closed?)`);
+    oldest = Math.min(oldest, Number(p.publish_time));
   }
-  const age = Math.round(Date.now() / 1000 - oldest);
-  return { source: `pyth-hermes (oldest publish ${age}s ago)`, prices };
+  const age = Number.isFinite(oldest) ? `${Math.round(nowSecs - oldest)}s` : "n/a";
+  return { source: `pyth-hermes (oldest publish ${age} ago)`, prices };
+}
+
+/** Fill feeds missing from `primary` with `fallback`, naming them in the source label. */
+export function mergeQuotes(primary: Quotes, fallback: Quotes): Quotes {
+  const missing = (Object.keys(FEEDS) as FeedKey[]).filter((k) => primary.prices[k] === undefined && fallback.prices[k] !== undefined);
+  if (missing.length === 0) return primary;
+  const prices = { ...primary.prices };
+  for (const k of missing) prices[k] = fallback.prices[k];
+  return { source: `${primary.source} + fallback[${missing.join(",")}] from ${fallback.source}`, prices };
 }
 
 let fxCache: { at: number; q: Quotes } | undefined;
@@ -60,11 +80,16 @@ export async function fromFrankfurter(): Promise<Quotes> {
   return q;
 }
 
-export function parseShock(s: string | undefined): number {
-  if (!s) return 1;
+/** "+12%", "-5", "8.5%" -> multiplier. Empty -> 1. Invalid -> warn and 1 (never kills the relay). */
+export function parseShock(s: string | undefined, warn: (m: string) => void = console.warn): number {
+  if (!s || !s.trim()) return 1;
   const m = s.trim().match(/^([+-]?\d+(?:\.\d+)?)%?$/);
-  if (!m) throw new Error(`bad shock "${s}" (use e.g. +12%)`);
-  return 1 + Number(m[1]) / 100;
+  const f = m ? 1 + Number(m[1]) / 100 : NaN;
+  if (!Number.isFinite(f) || f <= 0) {
+    warn(`[relay] WARN ignoring bad shock "${s}" (use e.g. +12%); using no shock`);
+    return 1;
+  }
+  return f;
 }
 function currentShock(): number {
   const f = join(KEYS, "shock-usdtry");
@@ -77,7 +102,14 @@ export const e8 = (x: number) => BigInt(Math.round(x * 1e8));
 async function getQuotes(): Promise<Quotes> {
   const key = process.env.PYTH_API_KEY;
   if (key) {
-    try { return await fromHermes(key); } catch (e) { console.warn(`hermes failed (${(e as Error).message}); falling back`); }
+    let h: Quotes | undefined;
+    try { h = await fromHermes(key); } catch (e) { console.warn(`hermes failed (${(e as Error).message}); falling back`); }
+    if (h) {
+      const complete = (Object.keys(FEEDS) as FeedKey[]).every((k) => h!.prices[k] !== undefined);
+      if (complete) return h;
+      try { return mergeQuotes(h, await fromFrankfurter()); }
+      catch (e) { console.warn(`fallback for missing hermes feeds failed (${(e as Error).message})`); return h; }
+    }
   }
   return fromFrankfurter();
 }
@@ -133,4 +165,6 @@ async function main() {
   }
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((e) => { console.error(e); process.exit(1); });
+}

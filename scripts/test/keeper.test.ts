@@ -31,3 +31,18 @@ describe("keeper decide()", () => {
     expect(decide({ ...base, status: "settled" })).toEqual([]);
   });
 });
+
+import { isLive } from "../src/decide.js";
+import { isLive as isLiveFromKeeper } from "../src/keeper.js";
+
+describe("keeper isLive()", () => {
+  it("live statuses in both casings", () => {
+    for (const s of ["Open", "Called", "PartiallyLiquidated", "open", "called", "partiallyLiquidated"]) expect(isLive(s)).toBe(true);
+  });
+  it("closed or unknown statuses are not live", () => {
+    for (const s of ["Settled", "Liquidated", "settled", "liquidated", "", "bogus"]) expect(isLive(s)).toBe(false);
+  });
+  it("is re-exported from keeper.ts", () => {
+    expect(isLiveFromKeeper).toBe(isLive);
+  });
+});
