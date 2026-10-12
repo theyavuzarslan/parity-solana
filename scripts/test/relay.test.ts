@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { mergeQuotes, parseHermes, parseShock, HERMES_STALE_SECS } from "../src/relay.js";
-import { FEEDS } from "../src/markets.js";
+import { mergeQuotes, parseHermes, parseShock, planWrites, e8, HERMES_STALE_SECS } from "../src/relay.js";
+import { FEEDS, MARKETS } from "../src/markets.js";
 
 describe("relay parseShock()", () => {
   it("parses signed percentages", () => {
@@ -50,5 +50,32 @@ describe("relay Hermes parsing", () => {
   it("returns the primary untouched when nothing is missing", () => {
     const primary = { source: "p", prices: { USD_TRY: 1 } };
     expect(mergeQuotes(primary, { source: "f", prices: {} })).toBe(primary);
+  });
+});
+
+describe("relay planWrites() (resync marker)", () => {
+  const usdtry = MARKETS.filter((m) => m.symbol === "USD/TRY");
+  const px = { USD_TRY: 49.17 };
+  const A = e8(49.17);
+  const slot = (a: bigint, set: boolean) => ({ a, b: 0n, set });
+  const slots = (s: ReturnType<typeof slot>) => { const out = []; out[usdtry[0]!.id] = s; return out; };
+
+  it("keeps a Dispatch shock while the source value is unchanged", () => {
+    const sent = new Map([[usdtry[0]!.id, `${A}:0`]]);
+    expect(planWrites(usdtry, px, slots(slot(e8(55), true)), sent, () => {})).toEqual([]);
+  });
+
+  it("rewrites a cleared slot even when lastSent matches (Reset demo state / demo mode off)", () => {
+    const sent = new Map([[usdtry[0]!.id, `${A}:0`]]);
+    const w = planWrites(usdtry, px, slots(slot(0n, false)), sent, () => {});
+    expect(w).toHaveLength(1);
+    expect(w[0]!.A).toBe(A);
+  });
+
+  it("rewrites when the source moves, and records an identical on-chain slot without writing", () => {
+    const sent = new Map<number, string>();
+    expect(planWrites(usdtry, px, slots(slot(e8(48), true)), sent, () => {})).toHaveLength(1);
+    expect(planWrites(usdtry, px, slots(slot(A, true)), sent, () => {})).toEqual([]);
+    expect(sent.get(usdtry[0]!.id)).toBe(`${A}:0`);
   });
 });

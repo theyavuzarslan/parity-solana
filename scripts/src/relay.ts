@@ -8,6 +8,9 @@
 // set_demo_price takes feed-level prices at 1e8 (feed A, feed B), not the composed spot.
 // Shock: SHOCK_USDTRY="+12%" (or the file keys/shock-usdtry containing e.g. "+8.5%", re-read every tick)
 // multiplies the USD/TRY feed wherever it is used (USD/TRY, EUR/TRY, GBP/TRY, GAU/TRY).
+// Hermes mode rewrites every market whose Hermes price moved, i.e. about every tick, so it overwrites
+// shocks made from the app's Dispatch sheet; ECB mode keeps them until the daily reference changes.
+// If demo mode is found OFF, the next tick turns it back on (devnet has no live Pyth FX feeds).
 // ONCE=1 runs a single tick and exits.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -116,8 +119,35 @@ async function getQuotes(): Promise<Quotes> {
 
 // Last (A, B) this relay wrote per market. A market is only rewritten when its *source* value
 // changes, so a shock applied on-chain from the app's Dispatch sheet persists until the source
-// moves (daily in ECB mode; about every tick in Hermes mode). Empty at startup -> compare on-chain.
+// moves (daily in ECB mode; about every tick in Hermes mode, which therefore overwrites Dispatch
+// shocks each tick). Resync marker: a slot that is NOT set on chain (Dispatch "Reset demo state"
+// clears every slot; set_demo_mode(false) clears them too) is always rewritten, whatever lastSent says.
 const lastSent = new Map<number, string>();
+
+export type DemoSlot = { a: { toString(): string }; b: { toString(): string }; set: boolean };
+export type PlannedWrite = { id: number; symbol: string; A: bigint; B: bigint; key: string };
+
+/** Which markets this tick must write (pure; exported for tests). */
+export function planWrites(
+  markets: readonly { id: number; symbol: string; feedAKey: FeedKey; feedBKey?: FeedKey }[],
+  px: Partial<Record<FeedKey, number>>,
+  slots: DemoSlot[],
+  sent: Map<number, string>,
+  warn: (m: string) => void = console.warn,
+): PlannedWrite[] {
+  const out: PlannedWrite[] = [];
+  for (const mk of markets) {
+    const a = px[mk.feedAKey], b = mk.feedBKey ? px[mk.feedBKey] : 0;
+    if (!a || (mk.feedBKey && !b)) { warn(`  no price for ${mk.symbol}`); continue; }
+    const A = e8(a), B = mk.feedBKey ? e8(b!) : 0n;
+    const key = `${A}:${B}`;
+    const cur = slots[mk.id];
+    if (cur?.set && sent.get(mk.id) === key) continue; // source unchanged; keep any Dispatch shock
+    if (cur?.set && BigInt(cur.a.toString()) === A && BigInt(cur.b.toString()) === B) { sent.set(mk.id, key); continue; }
+    out.push({ id: mk.id, symbol: mk.symbol, A, B, key });
+  }
+  return out;
+}
 
 async function tick(p: any, admin: any) {
   const q = await getQuotes();
@@ -125,21 +155,20 @@ async function tick(p: any, admin: any) {
   const px = { ...q.prices };
   if (shock !== 1 && px.USD_TRY) px.USD_TRY *= shock;
 
-  const demo: any = await p.account.demoState.fetch(demoPda());
+  // set_demo_price requires demo mode: if someone turned it off (Dispatch), turn it back on in the
+  // same transaction. Turning it off cleared every slot, so all markets are rewritten below.
+  const cfg: any = await p.account.config.fetch(configPda());
   const ixs = [];
-  const changed: string[] = [];
-  const pending = new Map<number, string>();
-  for (const mk of MARKETS) {
-    const a = px[mk.feedAKey], b = mk.feedBKey ? px[mk.feedBKey] : 0;
-    if (!a || (mk.feedBKey && !b)) { console.warn(`  no price for ${mk.symbol}`); continue; }
-    const A = e8(a), B = mk.feedBKey ? e8(b!) : 0n;
-    const key = `${A}:${B}`;
-    if (lastSent.get(mk.id) === key) continue;
-    const cur = demo.prices[mk.id];
-    if (cur.set && BigInt(cur.a.toString()) === A && BigInt(cur.b.toString()) === B) { lastSent.set(mk.id, key); continue; }
-    pending.set(mk.id, key);
-    changed.push(mk.symbol);
-    ixs.push(await p.methods.setDemoPrice(mk.id, new BN(A.toString()), new BN(B.toString()), true)
+  if (!cfg.demoMode) {
+    console.log(`[relay] ${new Date().toISOString()} demo_mode was OFF (devnet has no live Pyth FX feeds) -> re-enabling`);
+    ixs.push(await p.methods.setDemoMode(true)
+      .accountsPartial({ config: configPda(), admin: admin.publicKey, demoState: demoPda() }).instruction());
+  }
+  const demo: any = await p.account.demoState.fetch(demoPda());
+  const slots: DemoSlot[] = cfg.demoMode ? demo.prices : demo.prices.map((s: DemoSlot) => ({ ...s, set: false }));
+  const writes = planWrites(MARKETS, px, slots, lastSent);
+  for (const w of writes) {
+    ixs.push(await p.methods.setDemoPrice(w.id, new BN(w.A.toString()), new BN(w.B.toString()), true)
       .accountsPartial({ config: configPda(), admin: admin.publicKey, demoState: demoPda() }).instruction());
   }
   const shockTxt = shock !== 1 ? ` SHOCK USD/TRY x${shock.toFixed(4)}` : "";
@@ -149,8 +178,8 @@ async function tick(p: any, admin: any) {
     return;
   }
   const sig = await sendBatch(p, ixs);
-  for (const [id, key] of pending) lastSent.set(id, key);
-  console.log(`[relay] ${new Date().toISOString()} source=${q.source}${shockTxt} USD/TRY=${usdtry} set ${changed.length} markets  ${sig}`);
+  for (const w of writes) lastSent.set(w.id, w.key);
+  console.log(`[relay] ${new Date().toISOString()} source=${q.source}${shockTxt} USD/TRY=${usdtry} set ${writes.length} markets  ${sig}`);
 }
 
 async function sendBatch(p: any, ixs: any[]): Promise<string> {
