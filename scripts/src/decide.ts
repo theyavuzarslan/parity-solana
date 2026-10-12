@@ -5,8 +5,13 @@ export type Crank = "settle" | "liquidate" | "mark";
 
 const LIVE = new Set(["open", "called", "partiallyliquidated"]);
 
+/** Open / Called / PartiallyLiquidated (either casing) can still be cranked. */
+export function isLive(status: string): boolean {
+  return LIVE.has(status.toLowerCase());
+}
+
 export function decide(p: { status: string; breachCount: number; confirmMarks: number; now: number; maturity: number }): Crank[] {
-  if (!LIVE.has(p.status.toLowerCase())) return [];
+  if (!isLive(p.status)) return [];
   if (p.now >= p.maturity) return ["settle"];
   if (p.breachCount >= p.confirmMarks) return ["mark", "liquidate"];
   return ["mark"];

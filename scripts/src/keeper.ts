@@ -3,7 +3,7 @@
 // liquidate once breach_count >= config.params.liq_confirm_marks.
 // Signs with keys/keeper.json (a dedicated wallet, so its reward account never collides with a
 // party's payout account). Quietly skips the expected "not now" errors; logs every tx signature.
-import { Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction } from "@solana/web3.js";
+import { Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, TransactionInstruction } from "@solana/web3.js";
 import {
   ExtensionType, TOKEN_2022_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction,
   createInitializeAccount3Instruction, getAccountLen, getAssociatedTokenAddressSync, getCpiGuard,
@@ -14,16 +14,21 @@ import {
   CLUSTER, configPda, connection, demoPda, ensureSol, errorName, insurancePda, keypair, marketPda,
   priceFeedPda, program, ratePda, readMints, tokenProgramFor, vaultPda, type Mints,
 } from "./env.js";
-import { decide } from "./decide.js";
+import { decide, isLive } from "./decide.js";
 import { marketById } from "./markets.js";
 
-export { decide };
+export { decide, isLive };
 
 const INTERVAL = Number(process.env.KEEPER_INTERVAL_MS ?? 5_000);
 // Healthy (Open, no breach) positions are marked at most every KEEPER_HEALTHY_MARK_SECS to save fees;
 // Called / breached / partially liquidated positions are marked every tick.
 const HEALTHY_MARK_SECS = Number(process.env.KEEPER_HEALTHY_MARK_SECS ?? 15);
 const lastMark = new Map<string, number>();
+// Keeper SOL: top up to TARGET at startup; below MIN it logs loudly and re-funds from the deployer
+// (if its key is present) on the periodic check.
+const SOL_TARGET = Number(process.env.KEEPER_SOL_TARGET ?? (CLUSTER === "devnet" ? 0.3 : 2));
+const SOL_MIN = Number(process.env.KEEPER_SOL_MIN ?? 0.05);
+const SOL_CHECK_MS = Number(process.env.KEEPER_SOL_CHECK_MS ?? 60_000);
 const QUIET = new Set(["MarketClosedOrStale", "StalePublishTime", "NotLiquidatable", "NotConfirmed", "NotMatured"]);
 
 export type Payout = { address: PublicKey; ixs: TransactionInstruction[]; signers: Keypair[]; note: string };
@@ -131,7 +136,7 @@ async function effectiveNow(p: any): Promise<{ now: number; confirm: number }> {
 async function tick(p: any, keeper: Keypair, mints: Mints) {
   const { now, confirm } = await effectiveNow(p);
   const all: any[] = await p.account.position.all();
-  const live = all.filter((x) => decide({ status: statusOf(x.account.status), breachCount: 0, confirmMarks: 1, now: 0, maturity: 1 }).length);
+  const live = all.filter((x) => isLive(statusOf(x.account.status)));
   for (const { publicKey, account } of live) {
     const input = () => ({ confirmMarks: confirm, now, maturity: account.maturity.toNumber() });
     const plan = decide({ ...input(), status: statusOf(account.status), breachCount: account.breachCount });
@@ -164,12 +169,36 @@ async function tick(p: any, keeper: Keypair, mints: Mints) {
   if (process.env.KEEPER_VERBOSE) console.log(`[keeper] tick now=${now} live=${live.length}/${all.length}`);
 }
 
+/** Balance check; below SOL_MIN tries to re-fund from the deployer. Returns the balance in SOL. Never throws. */
+export async function checkSol(who: PublicKey, opts: { min: number; target: number }, log = console): Promise<number> {
+  let bal = 0;
+  try { bal = (await connection.getBalance(who, "confirmed")) / LAMPORTS_PER_SOL; }
+  catch (e) { log.error(`[keeper] SOL balance check failed: ${(e as Error).message}`); return NaN; }
+  if (bal >= opts.min) return bal;
+  if (bal < SOL_MIN) log.error(`[keeper] !!! LOW SOL: keeper ${who.toBase58()} has ${bal.toFixed(4)} SOL (< ${SOL_MIN}); trying to re-fund from the deployer`);
+  else log.log(`[keeper] topping up keeper from ${bal.toFixed(4)} to ${opts.target} SOL`);
+  try {
+    await ensureSol(who, opts.target);
+    bal = (await connection.getBalance(who, "confirmed")) / LAMPORTS_PER_SOL;
+    log.log(`[keeper] re-funded: ${bal.toFixed(4)} SOL`);
+  } catch (e) {
+    log.error(`[keeper] !!! re-fund failed (${(e as Error).message}); fund ${who.toBase58()} manually`);
+  }
+  return bal;
+}
+
 async function main() {
   const keeper = keypair("keeper");
   const p = program(keeper);
   const mints = readMints();
   console.log(`[keeper] cluster=${CLUSTER} keeper=${keeper.publicKey.toBase58()} interval=${INTERVAL}ms`);
-  await ensureSol(keeper.publicKey, CLUSTER === "devnet" ? 0.3 : 2);
+  // Startup funding must not kill the keeper: continue if it already holds the minimum.
+  const bal = await checkSol(keeper.publicKey, { min: SOL_TARGET, target: SOL_TARGET });
+  if (!(bal >= SOL_MIN)) {
+    console.error(`[keeper] cannot start: keeper ${keeper.publicKey.toBase58()} has ${Number.isNaN(bal) ? "unknown" : bal.toFixed(4)} SOL ` +
+      `(< ${SOL_MIN}) and could not be funded from the deployer. Send it devnet SOL and restart.`);
+    process.exit(1);
+  }
   // Keeper's own reward accounts (caller_ata), one per collateral mint.
   const ixs = [mints.usdc, mints.usdg].map((mint) => {
     const tp = tokenProgramFor(mint, mints);
@@ -177,9 +206,14 @@ async function main() {
       keeper.publicKey, getAssociatedTokenAddressSync(mint, keeper.publicKey, false, tp), keeper.publicKey, mint, tp);
   });
   await send(p, ixs, []);
+  let lastSolCheck = Date.now();
   for (;;) {
     try { await tick(p, keeper, mints); } catch (e) { console.error(`[keeper] tick failed: ${(e as Error).message}`); }
     if (process.env.ONCE) return;
+    if (Date.now() - lastSolCheck >= SOL_CHECK_MS) {
+      lastSolCheck = Date.now();
+      await checkSol(keeper.publicKey, { min: SOL_MIN, target: SOL_TARGET });
+    }
     await new Promise((r) => setTimeout(r, INTERVAL));
   }
 }
