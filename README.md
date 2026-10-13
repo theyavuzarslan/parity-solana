@@ -4,7 +4,7 @@ Lock a future lira rate on Solana. The price comes from the interest-rate gap, n
 
 > **Proposed design · Solana devnet · test tokens only · not offered to anyone, including Turkish residents, pending legal advice. The Hedge Advisor is a hedge calculator, not financial advice.**
 
-Live app: [LINK] · Pitch video: [LINK] · Demo video: [LINK] · Colosseum project page: [LINK]
+Live app: https://parity-solana.vercel.app · Pitch video: https://youtu.be/Snii0ximuSI · Demo video: https://youtu.be/S7A4nLoHFCk · Colosseum project page: [LINK]
 
 ## The problem
 
@@ -211,7 +211,7 @@ Evolves an earlier Stellar hackathon prototype of the same idea (github.com/nurk
 
 ## Team
 
-- Atakan Yavuzarslan: [FILL] · X [FILL] · GitHub [FILL]
+- Atakan Yavuzarslan · GitHub github.com/theyavuzarslan
 
 ## License
 

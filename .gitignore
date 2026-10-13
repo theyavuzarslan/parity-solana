@@ -10,3 +10,4 @@ test-ledger/
 !.env.example
 keys/
 .vercel
+.videos/
