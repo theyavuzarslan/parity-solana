@@ -17,7 +17,7 @@ Parity is a dated FX and gold forward market on Solana for people who earn in do
 **Links:**
 - GitHub: https://github.com/theyavuzarslan/parity-solana
 - Live demo (Vercel, devnet): https://parity-solana.vercel.app
-- Pitch video: https://youtu.be/Snii0ximuSI
+- Pitch video: https://youtu.be/jQ95vS_ii4c
 - Demo video: https://youtu.be/S7A4nLoHFCk
 - Program ID (devnet): 55jabap7VG6LKKJtidxVRBuLaLzFz6P96uPUicR2e4EQ (https://explorer.solana.com/address/55jabap7VG6LKKJtidxVRBuLaLzFz6P96uPUicR2e4EQ?cluster=devnet)
 
@@ -66,13 +66,13 @@ Cheap, frequent marks; several positions opened in one atomic transaction; USDC 
 
 **Legal status:** Proposed design, devnet only, test tokens, not offered to anyone, including Turkish residents, pending legal advice. The Advisor is a hedge calculator, not financial advice.
 
-**Links:** GitHub https://github.com/theyavuzarslan/parity-solana · Demo https://parity-solana.vercel.app · Pitch video https://youtu.be/Snii0ximuSI · Demo video https://youtu.be/S7A4nLoHFCk · Colosseum project page [LINK]
+**Links:** GitHub https://github.com/theyavuzarslan/parity-solana · Demo https://parity-solana.vercel.app · Pitch video https://youtu.be/jQ95vS_ii4c · Demo video https://youtu.be/S7A4nLoHFCk · Colosseum project page [LINK]
 
 ## 3. Team
 
 | Name | Role | Bio | X | GitHub |
 |---|---|---|---|---|
-| Atakan Yavuzarslan | [FILL] | [FILL] | [FILL] | github.com/theyavuzarslan |
+| Atakan Yavuzarslan | Founder & builder | BD Lead at GoPlus Security; Physics, Boğaziçi | @theyavuzarslan | github.com/theyavuzarslan |
 
 ## 4. Prior-work disclosure
 
