@@ -5,7 +5,6 @@ import { ParityProvider, useParityQuery } from "@/data/provider";
 import { ChainWallet } from "./ChainWallet";
 import { ConditionsStrip } from "./ConditionsStrip";
 import { DemoChip, PreviewChip } from "./DemoChip";
-import { ThemeToggle } from "./ThemeToggle";
 import { BottomTabs, TopTabs } from "./TabNav";
 import { WalletButton } from "./WalletButton";
 import { Wordmark } from "./Wordmark";
@@ -31,7 +30,6 @@ function Chrome({ children }: { children: ReactNode }) {
           </div>
           <TopTabs />
           <div className="flex items-center gap-3 pb-2">
-            <ThemeToggle className="hidden md:inline-flex" />
             <WalletButton />
           </div>
         </div>
@@ -39,7 +37,6 @@ function Chrome({ children }: { children: ReactNode }) {
           <span className="t-label rounded-[3px] border-[1.5px] border-navy px-1.5 py-0.5 text-xs text-navy">{clusterLabel}</span>
           {demoMode ? <DemoChip /> : null}
           {preview ? <PreviewChip /> : null}
-          <ThemeToggle className="ml-auto inline-flex md:hidden" />
         </div>
       </header>
       <main id="main" className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-6 md:px-8 md:py-8">
