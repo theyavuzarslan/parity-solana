@@ -45,7 +45,7 @@ Competition: Borsa Istanbul lists USD/TRY futures in $1,000 contracts with fixed
 
 Status: a proposed design, deployed on Solana devnet with test tokens only. It is not offered to anyone, including Turkish residents, pending legal advice. Next steps are legal review, an audit, a licensed partner, and only then mainnet.
 
-Prior work: Evolves our earlier Stellar hackathon prototype github.com/nurkardelens/parity-stellar — same team, our IP; the Solana program and app were rebuilt from scratch.
+Prior work: Evolves an earlier Stellar hackathon prototype of the same idea (github.com/nurkardelens/parity-stellar); the Solana program and app were rebuilt from scratch.
 
 ## 2. Superteam Türkiye listing answers
 
@@ -72,12 +72,11 @@ Cheap, frequent marks; several positions opened in one atomic transaction; USDC 
 
 | Name | Role | Bio | X | GitHub |
 |---|---|---|---|---|
-| Nur Kardelen | [FILL] | [FILL] | [FILL] | github.com/nurkardelens |
 | Atakan Yavuzarslan | [FILL] | [FILL] | [FILL] | [FILL] |
 
 ## 4. Prior-work disclosure
 
-Evolves our earlier Stellar hackathon prototype github.com/nurkardelens/parity-stellar — same team, our IP; the Solana program and app were rebuilt from scratch.
+Evolves an earlier Stellar hackathon prototype of the same idea (github.com/nurkardelens/parity-stellar); the Solana program and app were rebuilt from scratch.
 
 ## 5. Superteam Türkiye checklist
 

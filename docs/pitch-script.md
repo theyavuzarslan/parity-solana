@@ -14,7 +14,7 @@ English. About 430 spoken words. Numbers come only from docs/market-research.md 
 | 2:15-2:30 | **Competition.** "Borsa Istanbul lists dollar-lira futures, in thousand-dollar contracts with fixed expiries, through a Turkish broker. On-chain, venues like Ostium offer FX perpetuals, which have no end date and a funding cost that changes every hour. We didn't find a dollar-lira listing on any of them. Parity gives a dated rate from ten dollars, any tenor up to a year." | Three-column card: VİOP · ON-CHAIN PERPS · PARITY (rows: size, tenor, price source, settlement). |
 | 2:30-2:45 | **Status.** "This is a proposed design, on devnet only, with test tokens. It is not offered to anyone, including Turkish residents, pending legal advice. The Advisor is a hedge calculator, not financial advice." | Conditions-of-contract strip, enlarged. DEMO MODE chip. |
 | 2:45-2:53 | **Roadmap.** "Next: legal review, an audit, a licensed partner, and only then mainnet." | Four ruled steps: LEGAL REVIEW → AUDIT → LICENSED PARTNER → MAINNET. |
-| 2:53-3:00 | **Team.** "We're Nur Kardelen and Atakan Yavuzarslan. We built the first Parity on Stellar; this one is rebuilt from scratch on Solana." | Two names, [FILL] roles and X handles. Parity wordmark. |
+| 2:53-3:00 | **Team.** "I'm Atakan Yavuzarslan. Parity started as a Stellar prototype; this one is rebuilt from scratch on Solana." | One name, [FILL] role and X handle. Parity wordmark. |
 
 ## Recording notes
 - Read at a steady pace; 430 words lands near 2:55. If over time, cut the second sentence of Users first.

@@ -207,11 +207,10 @@ Credits: vendored MIT-licensed design skills in `.claude/skills` (see [NOTICE](N
 
 ## Prior work
 
-Evolves our earlier Stellar hackathon prototype github.com/nurkardelens/parity-stellar — same team, our IP. The Solana program and app were rebuilt from scratch.
+Evolves an earlier Stellar hackathon prototype of the same idea (github.com/nurkardelens/parity-stellar). The Solana program and app were rebuilt from scratch.
 
 ## Team
 
-- Nur Kardelen: [FILL] · X [FILL] · GitHub github.com/nurkardelens
 - Atakan Yavuzarslan: [FILL] · X [FILL] · GitHub [FILL]
 
 ## License
